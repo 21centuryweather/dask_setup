@@ -120,6 +120,13 @@ def setup_dask_client(
     max_mem_gb = total_mem_gib if max_mem_gb is None else min(max_mem_gb, total_mem_gib)
 
     usable_mem_gb = max(0.0, max_mem_gb - max(0.0, reserve_mem_gb))
+    
+    # Check if we have sufficient memory for at least minimal workers
+    if usable_mem_gb <= 0:
+        raise ValueError(
+            f"Not enough memory after reserving {reserve_mem_gb} GiB from {total_mem_gib:.1f} GiB total. "
+            f"Lower reserve_mem_gb or increase available memory."
+        )
 
     # ---------- Topology by workload ----------
     if workload_type == "cpu":

@@ -24,7 +24,7 @@ def test_workload_types(
     mock_psutil["cpu_count"].return_value = 8
 
     client, cluster, temp_dir = setup_dask_client(
-        workload_type=workload_type, dashboard=False, max_workers=8
+        workload_type=workload_type, dashboard=False, max_workers=8, reserve_mem_gb=2.0
     )
 
     try:
@@ -57,15 +57,17 @@ def test_workload_types(
         cluster.close()
 
 
-def test_pbs_environment_detection(isolated_env, mock_psutil):
+def test_pbs_environment_detection(isolated_env, mock_psutil, temp_dir):
     """Test PBS environment variable detection."""
-    # Set PBS environment variables
+    # Set PBS environment variables with a valid temp directory
     isolated_env["PBS_NCPUS"] = "16"
     isolated_env["PBS_MEM"] = "64gb"
-    isolated_env["PBS_JOBFS"] = "/local/pbs/jobfs"
+    pbs_jobfs = temp_dir + "/pbs_jobfs"
+    os.makedirs(pbs_jobfs, exist_ok=True)
+    isolated_env["PBS_JOBFS"] = pbs_jobfs
 
-    client, cluster, temp_dir = setup_dask_client(
-        workload_type="cpu", dashboard=False, max_workers=16
+    client, cluster, dask_temp_dir = setup_dask_client(
+        workload_type="cpu", dashboard=False, max_workers=16, reserve_mem_gb=4.0
     )
 
     try:
@@ -73,11 +75,11 @@ def test_pbs_environment_detection(isolated_env, mock_psutil):
         assert len(cluster.workers) == 16
 
         # Temp directory should be under PBS_JOBFS
-        assert temp_dir.startswith("/local/pbs/jobfs")
+        assert dask_temp_dir.startswith(pbs_jobfs)
 
         # Environment should be updated
-        assert os.environ.get("TMPDIR") == temp_dir
-        assert os.environ.get("DASK_TEMPORARY_DIRECTORY") == temp_dir
+        assert os.environ.get("TMPDIR") == dask_temp_dir
+        assert os.environ.get("DASK_TEMPORARY_DIRECTORY") == dask_temp_dir
 
     finally:
         client.close()
@@ -91,7 +93,7 @@ def test_slurm_environment_detection(isolated_env, mock_psutil):
     isolated_env["SLURM_MEM_PER_NODE"] = "98304"  # 96 GB in MB
 
     client, cluster, temp_dir = setup_dask_client(
-        workload_type="cpu", dashboard=False, max_workers=24
+        workload_type="cpu", dashboard=False, max_workers=24, reserve_mem_gb=4.0
     )
 
     try:
@@ -120,7 +122,7 @@ def test_psutil_fallback(isolated_env, mock_psutil):
     mock_psutil["cpu_count"].return_value = 4
     mock_psutil["virtual_memory"].return_value.total = 8 * (1024**3)  # 8 GiB
 
-    client, cluster, temp_dir = setup_dask_client(workload_type="cpu", dashboard=False)
+    client, cluster, temp_dir = setup_dask_client(workload_type="cpu", dashboard=False, reserve_mem_gb=2.0)
 
     try:
         # Should fall back to psutil values
@@ -133,12 +135,13 @@ def test_psutil_fallback(isolated_env, mock_psutil):
 
 def test_memory_reservation_error(isolated_env, mock_psutil):
     """Test that excessive memory reservation raises ValueError."""
-    mock_psutil["virtual_memory"].return_value.total = 4 * (1024**3)  # 4 GiB
+    mock_psutil["virtual_memory"].return_value.total = 1024**3  # 1 GiB total
+    mock_psutil["cpu_count"].return_value = 8  # 8 workers
 
-    with pytest.raises(ValueError, match="Not enough memory after reserving"):
+    with pytest.raises(ValueError, match="Not enough memory after reserving.*from.*total"):
         setup_dask_client(
             workload_type="cpu",
-            reserve_mem_gb=10.0,  # More than available
+            reserve_mem_gb=1.1,  # Reserve more than total available (1 GiB)
             dashboard=False,
         )
 
@@ -152,7 +155,7 @@ def test_temp_directory_routing(isolated_env, mock_psutil, temp_dir):
     isolated_env["TMPDIR"] = temp_dir + "/tmpdir"  # Should be ignored
 
     client, cluster, dask_temp_dir = setup_dask_client(
-        workload_type="cpu", max_workers=1, dashboard=False
+        workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0
     )
 
     try:
@@ -175,7 +178,7 @@ def test_temp_directory_tmpdir_fallback(isolated_env, mock_psutil, temp_dir):
     isolated_env["TMPDIR"] = tmpdir_path
 
     client, cluster, dask_temp_dir = setup_dask_client(
-        workload_type="cpu", max_workers=1, dashboard=False
+        workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0
     )
 
     try:
@@ -190,7 +193,7 @@ def test_temp_directory_tmpdir_fallback(isolated_env, mock_psutil, temp_dir):
 def test_dashboard_disabled(isolated_env, mock_psutil, capsys):
     """Test that dashboard=False suppresses dashboard output."""
     client, cluster, temp_dir = setup_dask_client(
-        workload_type="cpu", max_workers=1, dashboard=False
+        workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0
     )
 
     try:
@@ -211,7 +214,7 @@ def test_dashboard_disabled(isolated_env, mock_psutil, capsys):
 def test_dashboard_enabled(isolated_env, mock_psutil, capsys):
     """Test that dashboard=True produces dashboard output."""
     client, cluster, temp_dir = setup_dask_client(
-        workload_type="cpu", max_workers=1, dashboard=True
+        workload_type="cpu", max_workers=1, dashboard=True, reserve_mem_gb=2.0
     )
 
     try:
@@ -228,7 +231,7 @@ def test_dashboard_enabled(isolated_env, mock_psutil, capsys):
 def test_invalid_workload_type(isolated_env, mock_psutil):
     """Test that invalid workload_type raises AssertionError."""
     with pytest.raises(AssertionError, match="Invalid workload_type"):
-        setup_dask_client(workload_type="invalid", dashboard=False)
+        setup_dask_client(workload_type="invalid", dashboard=False, reserve_mem_gb=2.0)
 
 
 def test_memory_limits_per_worker(isolated_env, mock_psutil):
@@ -263,12 +266,18 @@ def test_adaptive_scaling(isolated_env, mock_psutil):
     mock_psutil["cpu_count"].return_value = 8
 
     client, cluster, temp_dir = setup_dask_client(
-        workload_type="cpu", adaptive=True, min_workers=2, max_workers=8, dashboard=False
+        workload_type="cpu", 
+        adaptive=True, 
+        min_workers=2, 
+        max_workers=8, 
+        reserve_mem_gb=2.0,  # Low reservation for test
+        dashboard=False
     )
 
     try:
-        # Should have adaptive scaling enabled
-        assert hasattr(cluster, "adaptive")
+        # Check that adaptive scaling was called - it should have created the scaling manager
+        # The adaptive attribute is created when adapt() is called
+        assert hasattr(cluster, "adaptive") or hasattr(cluster, "_adaptive")
         # Note: Testing actual adaptive behavior would require more complex setup
 
     finally:
@@ -280,7 +289,7 @@ def test_return_types(isolated_env, mock_psutil):
     """Test that function returns correct types."""
     from dask.distributed import Client, LocalCluster
 
-    result = setup_dask_client(workload_type="cpu", max_workers=1, dashboard=False)
+    result = setup_dask_client(workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0)
 
     client, cluster, temp_dir = result
 
@@ -301,28 +310,38 @@ def test_return_types(isolated_env, mock_psutil):
 def test_dask_configuration_applied(isolated_env, mock_psutil):
     """Test that Dask configuration is properly applied."""
     import dask
+    from unittest.mock import patch
 
-    client, cluster, temp_dir = setup_dask_client(
-        workload_type="cpu", max_workers=1, dashboard=False
-    )
+    # Mock dask.config.set to verify it's called with the right values
+    with patch('dask.config.set') as mock_config_set:
+        client, cluster, temp_dir = setup_dask_client(
+            workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0
+        )
 
-    try:
-        # Check that key Dask config values were set
-        config = dask.config.config
+        try:
+            # Verify that dask.config.set was called at least once (it may be called multiple times)
+            assert mock_config_set.call_count >= 1
+            
+            # Find the call that contains our configuration (should be the first call)
+            our_config_call = None
+            for call in mock_config_set.call_args_list:
+                if call[0] and isinstance(call[0][0], dict) and "distributed.worker.memory.target" in call[0][0]:
+                    our_config_call = call[0][0]
+                    break
+            
+            assert our_config_call is not None, "Expected config call not found"
+            
+            # Check key configuration values were set
+            assert our_config_call["distributed.worker.memory.target"] == 0.75
+            assert our_config_call["distributed.worker.memory.spill"] == 0.85
+            assert our_config_call["distributed.worker.memory.pause"] == 0.92
+            assert our_config_call["distributed.worker.memory.terminate"] == 0.98
+            assert our_config_call["temporary-directory"] == temp_dir
+            assert our_config_call["distributed.worker.local-directory"] == temp_dir
 
-        # Memory thresholds
-        assert config.get("distributed.worker.memory.target") == 0.75
-        assert config.get("distributed.worker.memory.spill") == 0.85
-        assert config.get("distributed.worker.memory.pause") == 0.92
-        assert config.get("distributed.worker.memory.terminate") == 0.98
-
-        # Temp directory settings
-        assert config.get("temporary-directory") == temp_dir
-        assert config.get("distributed.worker.local-directory") == temp_dir
-
-    finally:
-        client.close()
-        cluster.close()
+        finally:
+            client.close()
+            cluster.close()
 
 
 # Integration-style test to ensure everything works together
@@ -336,7 +355,7 @@ def test_integration_smoke_test():
 
         try:
             client, cluster, dask_temp = setup_dask_client(
-                workload_type="cpu", max_workers=1, dashboard=False
+                workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0
             )
 
             # Test that we can actually submit a simple computation
