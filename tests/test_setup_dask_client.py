@@ -122,7 +122,9 @@ def test_psutil_fallback(isolated_env, mock_psutil):
     mock_psutil["cpu_count"].return_value = 4
     mock_psutil["virtual_memory"].return_value.total = 8 * (1024**3)  # 8 GiB
 
-    client, cluster, temp_dir = setup_dask_client(workload_type="cpu", dashboard=False, reserve_mem_gb=2.0)
+    client, cluster, temp_dir = setup_dask_client(
+        workload_type="cpu", dashboard=False, reserve_mem_gb=2.0
+    )
 
     try:
         # Should fall back to psutil values
@@ -266,12 +268,12 @@ def test_adaptive_scaling(isolated_env, mock_psutil):
     mock_psutil["cpu_count"].return_value = 8
 
     client, cluster, temp_dir = setup_dask_client(
-        workload_type="cpu", 
-        adaptive=True, 
-        min_workers=2, 
-        max_workers=8, 
+        workload_type="cpu",
+        adaptive=True,
+        min_workers=2,
+        max_workers=8,
         reserve_mem_gb=2.0,  # Low reservation for test
-        dashboard=False
+        dashboard=False,
     )
 
     try:
@@ -289,7 +291,9 @@ def test_return_types(isolated_env, mock_psutil):
     """Test that function returns correct types."""
     from dask.distributed import Client, LocalCluster
 
-    result = setup_dask_client(workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0)
+    result = setup_dask_client(
+        workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0
+    )
 
     client, cluster, temp_dir = result
 
@@ -309,11 +313,10 @@ def test_return_types(isolated_env, mock_psutil):
 
 def test_dask_configuration_applied(isolated_env, mock_psutil):
     """Test that Dask configuration is properly applied."""
-    import dask
     from unittest.mock import patch
 
     # Mock dask.config.set to verify it's called with the right values
-    with patch('dask.config.set') as mock_config_set:
+    with patch("dask.config.set") as mock_config_set:
         client, cluster, temp_dir = setup_dask_client(
             workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0
         )
@@ -321,16 +324,20 @@ def test_dask_configuration_applied(isolated_env, mock_psutil):
         try:
             # Verify that dask.config.set was called at least once (it may be called multiple times)
             assert mock_config_set.call_count >= 1
-            
+
             # Find the call that contains our configuration (should be the first call)
             our_config_call = None
             for call in mock_config_set.call_args_list:
-                if call[0] and isinstance(call[0][0], dict) and "distributed.worker.memory.target" in call[0][0]:
+                if (
+                    call[0]
+                    and isinstance(call[0][0], dict)
+                    and "distributed.worker.memory.target" in call[0][0]
+                ):
                     our_config_call = call[0][0]
                     break
-            
+
             assert our_config_call is not None, "Expected config call not found"
-            
+
             # Check key configuration values were set
             assert our_config_call["distributed.worker.memory.target"] == 0.75
             assert our_config_call["distributed.worker.memory.spill"] == 0.85
