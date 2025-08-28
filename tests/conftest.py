@@ -30,15 +30,75 @@ def mock_psutil():
     Returns a dict with 'cpu_count' and 'virtual_memory' mock objects
     that can be configured per test.
     """
-    with patch("psutil.cpu_count") as mock_cpu, patch("psutil.virtual_memory") as mock_mem:
-        # Set sensible defaults
-        mock_cpu.return_value = 8  # 8 logical cores
+    # Need to mock psutil in the specific modules that import it
+    patches = [
+        patch("psutil.cpu_count"),
+        patch("psutil.virtual_memory"),
+        patch("dask_setup.resources.psutil.cpu_count"),
+        patch("dask_setup.resources.psutil.virtual_memory"),
+    ]
+
+    with (
+        patches[0] as mock_cpu1,
+        patches[1] as mock_mem1,
+        patches[2] as mock_cpu2,
+        patches[3] as mock_mem2,
+    ):
+        # Set sensible defaults for all mocks
+        mock_cpu1.return_value = 8  # 8 logical cores
+        mock_cpu2.return_value = 8
 
         # Mock memory object with total attribute
         mock_mem_obj = type("MockMemory", (), {"total": 16 * (1024**3)})()  # 16 GiB
-        mock_mem.return_value = mock_mem_obj
+        mock_mem1.return_value = mock_mem_obj
+        mock_mem2.return_value = mock_mem_obj
 
-        yield {"cpu_count": mock_cpu, "virtual_memory": mock_mem}
+        # Store all mocks so we can synchronize them when values change
+        all_cpu_mocks = [mock_cpu1, mock_cpu2]
+        all_mem_mocks = [mock_mem1, mock_mem2]
+
+        # Create wrapper class that synchronizes all mocks
+        class SynchronizedMock:
+            def __init__(self, primary_mock, all_mocks):
+                self._primary = primary_mock
+                self._all_mocks = all_mocks
+
+            @property
+            def return_value(self):
+                return self._primary.return_value
+
+            @return_value.setter
+            def return_value(self, value):
+                # Set the same value on all mocks
+                for mock in self._all_mocks:
+                    mock.return_value = value
+
+            def __getattr__(self, name):
+                return getattr(self._primary, name)
+
+        class SynchronizedMemoryMock:
+            def __init__(self, primary_mock, all_mocks):
+                self._primary = primary_mock
+                self._all_mocks = all_mocks
+
+            @property
+            def return_value(self):
+                return self._primary.return_value
+
+            @return_value.setter
+            def return_value(self, value):
+                # Set the same value on all mocks
+                for mock in self._all_mocks:
+                    mock.return_value = value
+
+            def __getattr__(self, name):
+                return getattr(self._primary, name)
+
+        # Return synchronized mock references
+        yield {
+            "cpu_count": SynchronizedMock(mock_cpu1, all_cpu_mocks),
+            "virtual_memory": SynchronizedMemoryMock(mock_mem1, all_mem_mocks),
+        }
 
 
 @pytest.fixture

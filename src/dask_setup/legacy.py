@@ -1,4 +1,4 @@
-"""Backward compatibility module.
+"""
 setup_dask_client() — single-node Dask helper tuned for NCI Gadi.
 
 - Detects cores/RAM from PBS/SLURM env, else psutil.
@@ -19,27 +19,6 @@ from pathlib import Path
 import dask
 import psutil
 from dask.distributed import Client, LocalCluster
-
-# Import improved memory parser from resources module
-try:
-    from dask_setup.resources import _parse_mem_bytes
-except ImportError:
-    # Fallback for standalone mode
-    def _parse_mem_bytes(s: str | None) -> int | None:
-        """Minimal fallback memory parser."""
-        if not s:
-            return None
-        try:
-            low = s.lower().strip()
-            if low.endswith("gb"):
-                return int(float(low[:-2]) * (1024**3))
-            if low.endswith("mb"):
-                return int(float(low[:-2]) * (1024**2))
-            if low.isdigit():
-                return int(low) * (1024**2)  # Assume MB
-            return int(s)
-        except (ValueError, AttributeError):
-            return None
 
 
 def setup_dask_client(
@@ -104,44 +83,34 @@ def setup_dask_client(
 
     # ---------- Detect resources (prefer scheduler env, else psutil) ----------
     slurm_cpus = os.getenv("SLURM_CPUS_ON_NODE")
-    slurm_mem_total = os.getenv("SLURM_MEM_PER_NODE")
-    slurm_mem_per_cpu = os.getenv("SLURM_MEM_PER_CPU")
+    slurm_mem_mb = os.getenv("SLURM_MEM_PER_NODE") or os.getenv("SLURM_MEM_PER_CPU")
     pbs_ncpus = os.getenv("NCPUS") or os.getenv("PBS_NCPUS")
     pbs_mem = os.getenv("PBS_VMEM") or os.getenv("PBS_MEM")
 
-    if slurm_cpus:
+    def _parse_mem_bytes(s: str | None) -> int | None:
+        if not s:
+            return None
         try:
-            logical_cores = int(slurm_cpus)
-        except ValueError:
-            logical_cores = psutil.cpu_count(logical=True)
+            low = s.lower()
+            if low.endswith("gb"):
+                return int(low[:-2]) * (1024**3)
+            if low.endswith("mb"):
+                return int(low[:-2]) * (1024**2)
+            return int(s)
+        except Exception:
+            return None
+
+    if slurm_cpus:
+        logical_cores = int(slurm_cpus)
     elif pbs_ncpus and pbs_ncpus.isdigit():
         logical_cores = int(pbs_ncpus)
     else:
         logical_cores = psutil.cpu_count(logical=True)
 
-    # Enhanced memory detection using improved parser
-    total_mem_bytes = None
-
-    # Try SLURM memory detection first
-    if slurm_mem_total:
-        total_mem_bytes = _parse_mem_bytes(slurm_mem_total)
-        # Fallback to old logic for pure digits (SLURM MB format)
-        if total_mem_bytes is None and slurm_mem_total.isdigit():
-            total_mem_bytes = int(slurm_mem_total) * 1024 * 1024
-    elif slurm_mem_per_cpu and logical_cores:
-        per_cpu_bytes = _parse_mem_bytes(slurm_mem_per_cpu)
-        if per_cpu_bytes is not None:
-            total_mem_bytes = per_cpu_bytes * logical_cores
-        elif slurm_mem_per_cpu.isdigit():
-            total_mem_bytes = int(slurm_mem_per_cpu) * logical_cores * 1024 * 1024
-
-    # Try PBS memory detection if SLURM failed
-    if total_mem_bytes is None:
-        total_mem_bytes = _parse_mem_bytes(pbs_mem)
-
-    # Final fallback to psutil
-    if total_mem_bytes is None:
-        total_mem_bytes = psutil.virtual_memory().total
+    if slurm_mem_mb and slurm_mem_mb.isdigit():
+        total_mem_bytes = int(slurm_mem_mb) * 1024 * 1024
+    else:
+        total_mem_bytes = _parse_mem_bytes(pbs_mem) or psutil.virtual_memory().total
 
     total_mem_gib = total_mem_bytes / (1024**3)
 
