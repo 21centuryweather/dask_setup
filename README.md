@@ -6,18 +6,18 @@ A comprehensive **single‑node** Dask setup helper designed for **HPC environme
 
 **Python Support**: Requires Python 3.11+ | **Installation**: `pip install dask_setup` or `pip install -e .[dev]` for development
 
-## ✨ Key Features
+## Key Features
 
-- 🏗️ **Smart Resource Detection**: Automatic PBS/SLURM/Kubernetes environment detection
-- ⚙️ **Advanced Configuration**: Profile-based config management with validation
-- 🎯 **Workload Optimization**: Specialized topologies for CPU/I/O/mixed workloads  
-- 🗄️ **Storage Format Intelligence**: Zarr/NetCDF-aware chunking and compression
-- 📊 **Xarray Integration**: Intelligent chunking recommendations
-- ❌ **Enhanced Error Handling**: Context-aware error messages with actionable suggestions
-- 💾 **Memory Safety**: Aggressive spilling prevents OOM crashes
-- 🔧 **HPC-Optimized**: Routes temp/spill to `$PBS_JOBFS` for maximum performance
-- 📈 **Dashboard Integration**: Easy SSH tunnel setup for monitoring
-- 🧪 **Battle-Tested**: 500+ tests, 90%+ coverage, production-ready
+- **Smart Resource Detection**: Automatic PBS/SLURM/Kubernetes environment detection
+- **Advanced Configuration**: Profile-based config management with validation
+- **Workload Optimization**: Specialized topologies for CPU/I/O/mixed workloads  
+- **Storage Format Intelligence**: Zarr/NetCDF-aware chunking and compression
+- **Xarray Integration**: Intelligent chunking recommendations
+- **Enhanced Error Handling**: Context-aware error messages with actionable suggestions
+- **Memory Safety**: Aggressive spilling prevents OOM crashes
+- **HPC-Optimized**: Routes temp/spill to `$PBS_JOBFS` for maximum performance
+- **Dashboard Integration**: Easy SSH tunnel setup for monitoring
+- **Battle-Tested**: 500+ tests, 90%+ coverage, production-ready
 
 ---
 
@@ -33,7 +33,7 @@ A comprehensive **single‑node** Dask setup helper designed for **HPC environme
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ```python
 from dask_setup import setup_dask_client
@@ -57,6 +57,7 @@ client, cluster, dask_tmp = setup_dask_client(config=config)
 ## Signature and Parameters
 
 ### Basic Function
+
 ```python
 def setup_dask_client(
     workload_type: str = "io",         # "cpu", "io", or "mixed"
@@ -73,6 +74,7 @@ def setup_dask_client(
 ```
 
 ### Advanced Configuration Class
+
 ```python
 @dataclass
 class DaskSetupConfig:
@@ -213,7 +215,7 @@ These **prevent OOM** when a few tasks inflate more than chunk‑size estimates.
 
 ---
 
-## 🎯 Configuration Management
+## Configuration Management
 
 `dask_setup` provides a comprehensive configuration system with profiles, validation, and environment-specific optimizations:
 
@@ -249,7 +251,7 @@ print(profiles["cpu_intensive"].description)
 - **`memory_conservative`**: Lower memory usage, safer for shared systems
 - **`balanced`**: Good default for mixed workloads
 
-## 🗄️ Storage Format Intelligence & I/O Patterns
+## Storage Format Intelligence & I/O Patterns
 
 `dask_setup` includes sophisticated storage format detection and optimization:
 
@@ -272,12 +274,14 @@ ds_optimized = ds.chunk(chunks)
 ### Format-Specific Optimizations
 
 #### Zarr Optimization
+
 - **Cloud-friendly chunking**: Larger chunks (128-512MB) for better throughput
 - **Compression codecs**: zstd for cloud, lz4 for local storage
 - **Consolidation**: Automatic metadata consolidation
 - **Filters**: Bit rounding for floating-point compression
 
-#### NetCDF Optimization  
+#### NetCDF Optimization
+
 - **HDF5-aware chunking**: Moderate chunk sizes (64-256MB) for HDF5 backend
 - **Unlimited dimension handling**: Conservative chunking of time dimensions
 - **Compression**: zlib with shuffle filter, precision control
@@ -303,7 +307,7 @@ chunks = recommend_io_chunks(
 )
 ```
 
-## 💾 Advanced Memory & Compression Management
+## Advanced Memory & Compression Management
 
 For improved performance and efficient resource usage, `dask_setup` supports comprehensive compression and I/O optimization:
 
@@ -330,6 +334,7 @@ client, cluster, dask_tmp = setup_dask_client(config=config)
 ### Compression algorithms
 
 Supported spill compression algorithms:
+
 - `"auto"` (default): Let Dask choose automatically
 - `"lz4"`: Fast compression, good for most workloads
 - `"zstd"`: Better compression ratio, slightly slower
@@ -337,6 +342,7 @@ Supported spill compression algorithms:
 - `"gzip"`, `"blosc"`, `"zlib"`, `"bz2"`, `"lzma"`: Other options
 
 **Recommendations:**
+
 - **CPU-intensive workloads**: Use `"lz4"` or `"zstd"` for good balance of speed and compression
 - **I/O-intensive workloads**: Consider `"lz4"` or `"snappy"` for minimal CPU overhead
 - **Large spill files**: Use `"zstd"` for maximum disk space savings
@@ -349,12 +355,14 @@ The `spill_threads` parameter controls how many threads Dask uses for spill oper
 - `1-16`: Number of threads for parallel spill I/O
 
 **Recommendations:**
+
 - **Fast storage (SSD/NVMe)**: Use `4-8` threads to maximize throughput
 - **Network storage**: Use `2-4` threads to avoid overwhelming the network
 - **Slow/shared storage**: Use `1-2` threads to minimize contention
 - **High-memory workloads**: Higher thread counts can help when frequent spilling occurs
 
 **Example configurations:**
+
 ```python
 # For workloads with frequent spilling on fast local storage
 config = DaskSetupConfig(
@@ -479,15 +487,17 @@ chunks = recommend_chunks(
 The chunking system provides multiple levels of optimization:
 
 **Standard `recommend_chunks`**:
+
 - Target 256-512 MiB per chunk for memory efficiency
 - Respect worker memory limits (60% safety factor)
 - Workload-aware strategies:
   - `"cpu"`: Square-ish chunks for compute-heavy operations
-  - `"io"`: Stream-friendly chunks along record dimensions 
+  - `"io"`: Stream-friendly chunks along record dimensions
   - `"mixed"`: Balanced approach for mixed workloads
   - `"auto"`: Detect based on dataset dimensions
 
 **Advanced `recommend_io_chunks`**:
+
 - **Format-specific optimization**: Zarr vs NetCDF chunking strategies
 - **Storage location awareness**: Cloud vs local vs network optimization
 - **Access pattern tuning**: Sequential, random, streaming patterns
@@ -495,7 +505,7 @@ The chunking system provides multiple levels of optimization:
 - **Throughput estimation**: Predicted I/O performance
 - **Warning system**: Alerts for suboptimal configurations
 
-## ❌ Enhanced Error Handling
+## Enhanced Error Handling
 
 `dask_setup` features a comprehensive error handling system that provides clear, actionable guidance:
 
@@ -513,17 +523,17 @@ try:
     )
 except ConfigurationValidationError as e:
     print(e)
-    # ❌ [CONFIG_VALIDATION] Configuration validation failed:
+    #    [CONFIG_VALIDATION] Configuration validation failed:
     #    • max_workers: must be positive (current: -5)
     #    • reserve_mem_gb: exceeds total system memory (16.0 GB)
     #    • workload_type: must be one of ['cpu', 'io', 'mixed']
     # 
-    # 💡 Suggestions:
+    #    Suggestions:
     #    1. Set max_workers to a value between 1 and 10
     #    2. Try reserve_mem_gb=3 (20% of total memory, capped at 10 GB)
     #    3. Use workload_type='io' for I/O intensive tasks
     # 
-    # 📖 Documentation: https://github.com/dask-contrib/dask_setup#configuration
+    #  Documentation: https://github.com/dask-contrib/dask_setup#configuration
 ```
 
 ### Error Types with Context
@@ -544,9 +554,9 @@ try:
     setup_dask_client(max_workers=1000)  # Too many workers
 except ResourceConstraintError as e:
     print(e)
-    # ❌ [RESOURCE_CONSTRAINT] Insufficient CPU cores for configuration
+    #   [RESOURCE_CONSTRAINT] Insufficient CPU cores for configuration
     # 
-    # 💡 Suggestions:
+    #   Suggestions:
     #    1. Request more CPUs in your job submission script (e.g., #PBS -l ncpus=32)
     #    2. Reduce max_workers to 10
     #    3. Use workload_type='io' for I/O bound tasks (uses fewer cores)
@@ -555,14 +565,15 @@ except ResourceConstraintError as e:
 ### Diagnostic Information
 
 Every error includes full environmental context:
+
 - System resources (CPU, memory)
-- HPC environment detection (SLURM/PBS/local) 
+- HPC environment detection (SLURM/PBS/local)
 - Available dependencies (numpy, xarray, zarr, etc.)
 - Configuration details and current values
 
 ---
 
-## 🧪 Testing & Quality Assurance
+## Testing & Quality Assurance
 
 `dask_setup` is thoroughly tested and production-ready:
 
@@ -575,7 +586,7 @@ Every error includes full environmental context:
 
 ---
 
-## 📊 Monitoring & Observability
+## Monitoring & Observability
 
 ### Advanced Dashboard Features
 
@@ -592,11 +603,11 @@ client, cluster, tmp = setup_dask_client(config=config)
 from dask_setup.error_handling import ErrorContext
 context = ErrorContext()
 print(context.get_environment_summary())
-# 🖥️  Environment: SLURM
-# 🐍 Python: 3.11.5  
-# 💾 Memory: 128.0 GB
-# ⚙️  CPUs: 48
-# 📦 Dependencies:
+#   Environment: SLURM
+#   Python: 3.11.5  
+#   Memory: 128.0 GB
+#   CPUs: 48
+#   Dependencies:
 #    • dask: 2024.1.0
 #    • xarray: 2024.1.1
 #    • zarr: 2.16.1
@@ -604,7 +615,7 @@ print(context.get_environment_summary())
 
 ---
 
-## 🔧 CLI Integration
+## CLI Integration
 
 `dask_setup` includes command-line tools for configuration management:
 
@@ -717,7 +728,7 @@ def setup_dask_client(...):
 
 ---
 
-## 🎯 Migration from v1.x
+## Migration from v1.x
 
 For users upgrading from earlier versions:
 
@@ -748,7 +759,7 @@ chunks = recommend_io_chunks(ds, "data.zarr", verbose=True)
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
@@ -759,7 +770,7 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
-## 📜 License
+## License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
@@ -768,16 +779,18 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## TL;DR
 
 **For quick results:**
+
 - `setup_dask_client("cpu")` → Heavy math/computation
 - `setup_dask_client("io")` → Large file I/O (NetCDF/Zarr)
 - `setup_dask_client("mixed")` → Mixed workloads
 - `setup_dask_client(profile="cpu_intensive")` → Use optimized profiles
 
 **Key benefits:**
-- 🚀 **Intelligent defaults** eliminate configuration guesswork
-- 🎯 **Storage format optimization** for Zarr/NetCDF performance
-- ❌ **User-friendly errors** with actionable suggestions
-- 💾 **Memory safety** with spilling prevents OOM crashes
-- 🏗️ **HPC-optimized** routes temp/spill to `$PBS_JOBFS`
-- 📊 **Comprehensive monitoring** with dashboard and diagnostics
-- 🧪 **Production-ready** with 500+ tests and 90%+ coverage
+
+- **Intelligent defaults** eliminate configuration guesswork
+- **Storage format optimization** for Zarr/NetCDF performance
+- **User-friendly errors** with actionable suggestions
+- **Memory safety** with spilling prevents OOM crashes
+- **HPC-optimized** routes temp/spill to `$PBS_JOBFS`
+- **Comprehensive monitoring** with dashboard and diagnostics
+- **Production-ready** with 500+ tests and 90%+ coverage

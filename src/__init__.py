@@ -1,4 +1,0 @@
-# Backward compatibility import from the new package structure
-from .dask_setup import setup_dask_client
-
-__all__ = ["setup_dask_client"]

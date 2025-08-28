@@ -71,14 +71,14 @@ class ErrorContext:
     def get_environment_summary(self) -> str:
         """Get a summary of the current environment."""
         lines = [
-            f"🖥️  Environment: {self.hpc_environment}",
-            f"🐍 Python: {self.python_version}",
-            f"💾 Memory: {self.total_memory_gb:.1f} GB",
-            f"⚙️  CPUs: {self.cpu_count}",
+            f" Environment: {self.hpc_environment}",
+            f" Python: {self.python_version}",
+            f" Memory: {self.total_memory_gb:.1f} GB",
+            f" CPUs: {self.cpu_count}",
         ]
 
         if self.available_dependencies:
-            lines.append("📦 Dependencies:")
+            lines.append("Dependencies:")
             for name, version in sorted(self.available_dependencies.items()):
                 lines.append(f"   • {name}: {version}")
 
@@ -111,19 +111,19 @@ class EnhancedDaskSetupError(DaskSetupError):
 
         # Error header with emoji and code
         if self.error_code:
-            lines.append(f"❌ [{self.error_code}] {message}")
+            lines.append(f" [{self.error_code}] {message}")
         else:
-            lines.append(f"❌ {message}")
+            lines.append(f" {message}")
 
         # Add suggestions if available
         if self.suggestions:
-            lines.append("\n💡 Suggestions:")
+            lines.append("\n Suggestions:")
             for i, suggestion in enumerate(self.suggestions, 1):
                 lines.append(f"   {i}. {suggestion}")
 
         # Add documentation link if available
         if self.documentation_url:
-            lines.append(f"\n📖 Documentation: {self.documentation_url}")
+            lines.append(f"\n Documentation: {self.documentation_url}")
 
         return "\n".join(lines)
 

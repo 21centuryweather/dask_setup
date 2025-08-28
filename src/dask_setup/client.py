@@ -250,7 +250,7 @@ def setup_dask_client(
             # Try to import xarray module to check availability
 
             print("\n" + "=" * 60)
-            print("💡 Xarray Chunking Recommendations")
+            print(" Xarray Chunking Recommendations")
             print("=" * 60)
             print(
                 "To get optimal chunking suggestions for your xarray datasets:\n"
@@ -273,7 +273,7 @@ def setup_dask_client(
 
         except ImportError:
             print(
-                "\n⚠️  Xarray integration requires xarray and numpy to be installed.\n"
+                "\n Xarray integration requires xarray and numpy to be installed.\n"
                 "Install with: pip install xarray numpy"
             )
 

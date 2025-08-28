@@ -49,13 +49,13 @@ class TestFormatting:
 
         result = format_profile_list(profiles)
 
-        assert "📦 Built-in Profiles:" in result
+        assert " Built-in Profiles:" in result
         assert "cpu_profile" in result
         assert "io_profile" in result
         assert "CPU intensive profile" in result
         assert "[cpu, analysis]" in result
         assert "[io]" in result
-        assert "👤 User Profiles:" not in result
+        assert " User Profiles:" not in result
 
     @pytest.mark.unit
     def test_format_profile_list_user_only(self):
@@ -66,10 +66,10 @@ class TestFormatting:
 
         result = format_profile_list(profiles)
 
-        assert "👤 User Profiles:" in result
+        assert " User Profiles:" in result
         assert "my_profile" in result
         assert "My custom profile" in result
-        assert "📦 Built-in Profiles:" not in result
+        assert " Built-in Profiles:" not in result
 
     @pytest.mark.unit
     def test_format_profile_list_mixed(self):
@@ -88,8 +88,8 @@ class TestFormatting:
 
         result = format_profile_list(profiles)
 
-        assert "📦 Built-in Profiles:" in result
-        assert "👤 User Profiles:" in result
+        assert " Built-in Profiles:" in result
+        assert " User Profiles:" in result
         assert "builtin" in result
         assert "user" in result
         assert "[builtin]" in result
@@ -305,7 +305,7 @@ class TestShowCommand:
 
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         output = "".join(print_calls)
-        assert "❌ Validation Errors:" in output
+        assert " Validation Errors:" in output
         assert "Config error 1" in output
         assert "Config error 2" in output
 
@@ -331,7 +331,7 @@ class TestShowCommand:
 
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         output = "".join(print_calls)
-        assert "✅ Profile is valid" in output
+        assert " Profile is valid" in output
 
     @pytest.mark.unit
     @patch("dask_setup.cli.ConfigManager")
@@ -371,7 +371,7 @@ class TestShowCommand:
 
         # Check that error was printed to stderr
         assert stderr_call is not None
-        assert "❌ Profile 'nonexistent' not found." in stderr_call
+        assert " Profile 'nonexistent' not found." in stderr_call
 
         # Check that available profiles are shown on stdout
         stdout_output = "".join(stdout_calls)
@@ -406,7 +406,7 @@ class TestCreateCommand:
 
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         output = "".join(print_calls)
-        assert "✅ Profile 'new_profile' created successfully!" in output
+        assert " Profile 'new_profile' created successfully!" in output
         assert "Profile: new_profile" in output
 
     @pytest.mark.unit
@@ -458,7 +458,7 @@ class TestCreateCommand:
 
         assert result == 1
         assert (
-            "❌ Profile 'existing' already exists. Use --force to overwrite."
+            " Profile 'existing' already exists. Use --force to overwrite."
             in mock_stderr.getvalue()
         )
 
@@ -502,7 +502,7 @@ class TestCreateCommand:
             result = cmd_create_profile(args)
 
         assert result == 1
-        assert "❌ Base profile 'nonexistent_base' not found." in mock_stderr.getvalue()
+        assert " Base profile 'nonexistent_base' not found." in mock_stderr.getvalue()
 
     @pytest.mark.unit
     @patch("dask_setup.cli.ConfigManager")
@@ -524,7 +524,7 @@ class TestCreateCommand:
             result = cmd_create_profile(args)
 
         assert result == 1
-        assert "❌ Configuration error: Invalid config" in mock_stderr.getvalue()
+        assert " Configuration error: Invalid config" in mock_stderr.getvalue()
 
     @pytest.mark.unit
     @patch("dask_setup.cli.ConfigManager")
@@ -542,7 +542,7 @@ class TestCreateCommand:
             result = cmd_create_profile(args)
 
         assert result == 1
-        assert "❌ Failed to create profile: Unexpected error" in mock_stderr.getvalue()
+        assert " Failed to create profile: Unexpected error" in mock_stderr.getvalue()
 
 
 class TestValidateCommand:
@@ -570,8 +570,8 @@ class TestValidateCommand:
 
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         output = "".join(print_calls)
-        assert "✅ Profile 'valid' is valid" in output
-        assert "⚠️  Warnings:" in output
+        assert " Profile 'valid' is valid" in output
+        assert " Warnings:" in output
         assert "Warning message" in output
 
     @pytest.mark.unit
@@ -596,7 +596,7 @@ class TestValidateCommand:
 
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         output = "".join(print_calls)
-        assert "❌ Profile 'invalid' has validation errors:" in output
+        assert " Profile 'invalid' has validation errors:" in output
         assert "Error 1" in output
         assert "Error 2" in output
 
@@ -616,7 +616,7 @@ class TestValidateCommand:
             result = cmd_validate_profile(args)
 
         assert result == 1
-        assert "❌ Profile 'missing' not found." in mock_stderr.getvalue()
+        assert " Profile 'missing' not found." in mock_stderr.getvalue()
 
     @pytest.mark.unit
     @patch("dask_setup.cli.ConfigManager")
@@ -648,8 +648,8 @@ class TestValidateCommand:
 
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         output = "".join(print_calls)
-        assert "✅ profile1" in output
-        assert "✅ profile2" in output
+        assert " profile1" in output
+        assert " profile2" in output
         assert "Warning: Warning" in output
 
     @pytest.mark.unit
@@ -681,9 +681,9 @@ class TestValidateCommand:
 
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         output = "".join(print_calls)
-        assert "❌ invalid" in output
+        assert " invalid" in output
         assert "Error: Error in invalid" in output
-        assert "✅ valid" in output
+        assert " valid" in output
 
 
 class TestDeleteCommand:
@@ -708,7 +708,7 @@ class TestDeleteCommand:
 
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         output = "".join(print_calls)
-        assert "✅ Profile 'user_profile' deleted successfully!" in output
+        assert " Profile 'user_profile' deleted successfully!" in output
 
     @pytest.mark.unit
     @patch("dask_setup.cli.ConfigManager")
@@ -725,7 +725,7 @@ class TestDeleteCommand:
             result = cmd_delete_profile(args)
 
         assert result == 1
-        assert "❌ Profile 'nonexistent' not found." in mock_stderr.getvalue()
+        assert " Profile 'nonexistent' not found." in mock_stderr.getvalue()
 
     @pytest.mark.unit
     @patch("dask_setup.cli.ConfigManager")
@@ -744,7 +744,7 @@ class TestDeleteCommand:
             result = cmd_delete_profile(args)
 
         assert result == 1
-        assert "❌ Cannot delete builtin profile" in mock_stderr.getvalue()
+        assert " Cannot delete builtin profile" in mock_stderr.getvalue()
 
 
 class TestExportCommand:
@@ -820,7 +820,7 @@ class TestExportCommand:
         # Check success message
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         output = "".join(print_calls)
-        assert "✅ Profile exported to test_export.yaml" in output
+        assert " Profile exported to test_export.yaml" in output
 
     @pytest.mark.unit
     @patch("dask_setup.cli.ConfigManager")
@@ -837,7 +837,7 @@ class TestExportCommand:
             result = cmd_export_profile(args)
 
         assert result == 1
-        assert "❌ Profile 'nonexistent' not found." in mock_stderr.getvalue()
+        assert " Profile 'nonexistent' not found." in mock_stderr.getvalue()
 
     @pytest.mark.unit
     @patch("dask_setup.cli.ConfigManager")
@@ -861,7 +861,7 @@ class TestExportCommand:
             result = cmd_export_profile(args)
 
         assert result == 1
-        assert "❌ Failed to export profile: Permission denied" in mock_stderr.getvalue()
+        assert " Failed to export profile: Permission denied" in mock_stderr.getvalue()
 
 
 class TestParser:
@@ -1021,7 +1021,7 @@ class TestMainFunction:
             result = main()
 
         assert result == 1
-        assert "❌ Cancelled by user." in mock_stderr.getvalue()
+        assert " Cancelled by user." in mock_stderr.getvalue()
 
     @pytest.mark.unit
     @patch("dask_setup.cli.create_parser")
@@ -1037,7 +1037,7 @@ class TestMainFunction:
             result = main()
 
         assert result == 1
-        assert "❌ Unexpected error: Unexpected error" in mock_stderr.getvalue()
+        assert " Unexpected error: Unexpected error" in mock_stderr.getvalue()
 
 
 class TestCLIIntegration:

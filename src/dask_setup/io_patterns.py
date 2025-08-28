@@ -699,30 +699,30 @@ def recommend_io_chunks(
 
     if verbose:
         # Print detailed report
-        print("🗄️  I/O Optimization Recommendations")
+        print(" I/O Optimization Recommendations")
         print("=" * 40)
-        print(f"📁 Format: {detected_format.upper()}")
-        print(f"📍 Location: {storage_location}")
-        print(f"🔄 Access pattern: {access_pattern}")
+        print(f" Format: {detected_format.upper()}")
+        print(f" Location: {storage_location}")
+        print(f" Access pattern: {access_pattern}")
 
         if chunks:
-            print(f"📦 Recommended chunks: {chunks}")
-            print(f"📏 Estimated chunk size: {chunk_mb:.1f} MiB")
+            print(f" Recommended chunks: {chunks}")
+            print(f" Estimated chunk size: {chunk_mb:.1f} MiB")
         else:
-            print("📦 No chunking recommended")
+            print(" No chunking recommended")
 
         print(
-            f"🗜️  Compression: {compression.get('codec', 'none')} (level {compression.get('level', 0)})"
+            f" Compression: {compression.get('codec', 'none')} (level {compression.get('level', 0)})"
         )
         print(f"⚡ Estimated throughput: {throughput:.1f} MB/s")
 
         if warnings_list:
-            print("\n⚠️  Warnings:")
+            print("\n Warnings:")
             for warning in warnings_list:
                 print(f"  • {warning}")
 
         if chunks:
-            print("\n💡 Usage:")
+            print("\n Usage:")
             print(f"   ds_chunked = ds.chunk({chunks})")
 
         return recommendation

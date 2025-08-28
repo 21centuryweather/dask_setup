@@ -450,11 +450,11 @@ def _format_chunk_report(
 
     # Recommended chunks
     if recommendation.chunks:
-        lines.append(f"✅ Recommended chunks: {dict(recommendation.chunks)}")
-        lines.append(f"📏 Estimated chunk size: {recommendation.estimated_chunk_mb:.1f} MiB")
-        lines.append(f"🔢 Total chunks: {recommendation.total_chunks}")
+        lines.append(f" Recommended chunks: {dict(recommendation.chunks)}")
+        lines.append(f" Estimated chunk size: {recommendation.estimated_chunk_mb:.1f} MiB")
+        lines.append(f" Total chunks: {recommendation.total_chunks}")
     else:
-        lines.append("ℹ️  No chunking recommended (dataset fits comfortably in memory)")
+        lines.append(" No chunking recommended (dataset fits comfortably in memory)")
 
     # Current vs recommended comparison
     if verbose and dataset_info["is_currently_chunked"]:
@@ -471,14 +471,14 @@ def _format_chunk_report(
     # Warnings
     if recommendation.warnings:
         lines.append("")
-        lines.append("⚠️  Warnings:")
+        lines.append(" Warnings:")
         for warning in recommendation.warnings:
             lines.append(f"  • {warning}")
 
     # Usage example
     if recommendation.chunks:
         lines.append("")
-        lines.append("💡 Usage:")
+        lines.append(" Usage:")
         lines.append(f"   ds_chunked = ds.chunk({dict(recommendation.chunks)})")
 
     return "\n".join(lines)

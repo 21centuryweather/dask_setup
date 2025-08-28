@@ -22,17 +22,17 @@ from dask_setup.error_handling import (
     format_exception_chain,
 )
 
-print("🔧 Enhanced Error Handling Demonstration")
+print(" Enhanced Error Handling Demonstration")
 print("=" * 50)
 
 # 1. Show environment context detection
-print("\n1. 🖥️  Environment Context Detection")
+print("\n1.  Environment Context Detection")
 print("-" * 35)
 context = ErrorContext()
 print(context.get_environment_summary())
 
 # 2. Configuration validation errors
-print("\n2. ⚙️  Configuration Validation")
+print("\n2.  Configuration Validation")
 print("-" * 30)
 try:
     config = DaskSetupConfig(
@@ -53,7 +53,7 @@ except ResourceConstraintError as e:
     print(str(e))
 
 # 4. Dependency errors
-print("\n4. 📦 Dependency Errors")
+print("\n4. Dependency Errors")
 print("-" * 20)
 try:
     raise DependencyError(missing_package="xarray", feature="xarray chunking recommendations")
@@ -61,7 +61,7 @@ except DependencyError as e:
     print(str(e))
 
 # 5. Error factory demonstration
-print("\n5. 🏭 Error Factory")
+print("\n5. Error Factory")
 print("-" * 15)
 storage_error = create_user_friendly_error(
     "storage", "Could not access Zarr store", storage_path="s3://my-bucket/data.zarr"
@@ -69,7 +69,7 @@ storage_error = create_user_friendly_error(
 print(str(storage_error))
 
 # 6. Exception chain formatting
-print("\n6. 🔗 Exception Chain Formatting")
+print("\n6. Exception Chain Formatting")
 print("-" * 30)
 original = ValueError("Original error from low-level operation")
 enhanced = ConfigurationValidationError(
@@ -82,11 +82,11 @@ formatted_chain = format_exception_chain(enhanced)
 print(formatted_chain)
 
 print("\n" + "=" * 50)
-print("✅ Enhanced Error Handling Demo Complete!")
+print(" Enhanced Error Handling Demo Complete!")
 print("\nKey benefits:")
-print("• 🎯 Clear, actionable error messages with emoji")
-print("• 🔧 Environment-specific suggestions")
-print("• 📋 Comprehensive context information")
-print("• 🏥 Diagnostic information for troubleshooting")
-print("• 📚 Documentation links for further help")
-print("• 🔗 Exception chain formatting for debugging")
+print("• Clear, actionable error messages with emoji")
+print("• Environment-specific suggestions")
+print("• Comprehensive context information")
+print("• Diagnostic information for troubleshooting")
+print("• Documentation links for further help")
+print("• Exception chain formatting for debugging")

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2025-01-17
 
 ### Added
+
 - Configurable spill compression for worker memory spill files via `DaskSetupConfig.spill_compression`.
   - Applies Dask key `distributed.worker.memory.spill-compression`.
   - Supported values include: `auto`, `lz4`, `zstd`, `snappy`, `gzip`, `blosc`, `zlib`, `bz2`, `lzma`.
@@ -26,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved test isolation and robustness for PBS environment detection to avoid flaky results.
 
 ### Enhanced
+
 - Improved memory parsing capabilities in resource detection:
   - Added support for space-separated memory formats (e.g., "16 GB", "1.5 TiB").
   - Enhanced validation with overflow protection (8 EiB maximum).
@@ -37,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved mock fixture architecture to synchronize psutil mock responses across modules.
 
 ### Fixed
+
 - Fixed flaky PBS environment detection test by making worker count assertion more resilient (accepting range based on environment).
 - Fixed deprecation warnings from distributed library during tests by suppressing FutureWarnings related to `worker.nthreads`.
 - Removed unused imports and variables.

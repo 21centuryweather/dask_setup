@@ -22,7 +22,7 @@ def format_profile_list(profiles: dict[str, Any]) -> str:
     user_profiles = {name: p for name, p in profiles.items() if not p.builtin}
 
     if builtin_profiles:
-        lines.append("📦 Built-in Profiles:")
+        lines.append(" Built-in Profiles:")
         for name, profile in sorted(builtin_profiles.items()):
             tags_str = f" [{', '.join(profile.tags)}]" if profile.tags else ""
             lines.append(f"  {name:20} - {profile.description}{tags_str}")
@@ -30,7 +30,7 @@ def format_profile_list(profiles: dict[str, Any]) -> str:
     if user_profiles:
         if builtin_profiles:
             lines.append("")
-        lines.append("👤 User Profiles:")
+        lines.append(" User Profiles:")
         for name, profile in sorted(user_profiles.items()):
             tags_str = f" [{', '.join(profile.tags)}]" if profile.tags else ""
             lines.append(f"  {name:20} - {profile.description}{tags_str}")
@@ -109,7 +109,7 @@ def cmd_show_profile(args: argparse.Namespace) -> int:
     profile = manager.get_profile(args.name)
 
     if profile is None:
-        print(f"❌ Profile '{args.name}' not found.", file=sys.stderr)
+        print(f" Profile '{args.name}' not found.", file=sys.stderr)
         print("Available profiles:")
         profiles = manager.list_profiles()
         print(format_profile_list(profiles))
@@ -121,7 +121,7 @@ def cmd_show_profile(args: argparse.Namespace) -> int:
     is_valid, errors, warnings = manager.validate_profile(args.name)
 
     if not is_valid:
-        print("\n❌ Validation Errors:")
+        print("\n Validation Errors:")
         for error in errors:
             print(f"  - {error}")
     elif warnings:
@@ -129,7 +129,7 @@ def cmd_show_profile(args: argparse.Namespace) -> int:
         for warning in warnings:
             print(f"  - {warning}")
     else:
-        print("\n✅ Profile is valid")
+        print("\n Profile is valid")
 
     return 0 if is_valid else 1
 
@@ -142,7 +142,7 @@ def cmd_create_profile(args: argparse.Namespace) -> int:
     existing = manager.get_profile(args.name)
     if existing is not None and not args.force:
         print(
-            f"❌ Profile '{args.name}' already exists. Use --force to overwrite.",
+            f" Profile '{args.name}' already exists. Use --force to overwrite.",
             file=sys.stderr,
         )
         return 1
@@ -152,7 +152,7 @@ def cmd_create_profile(args: argparse.Namespace) -> int:
             # Create from existing profile
             base_profile = manager.get_profile(args.from_profile)
             if base_profile is None:
-                print(f"❌ Base profile '{args.from_profile}' not found.", file=sys.stderr)
+                print(f" Base profile '{args.from_profile}' not found.", file=sys.stderr)
                 return 1
 
             # Copy configuration and update name
@@ -169,7 +169,7 @@ def cmd_create_profile(args: argparse.Namespace) -> int:
 
         # Save the profile
         manager.save_profile(profile)
-        print(f"\n✅ Profile '{args.name}' created successfully!")
+        print(f"\n Profile '{args.name}' created successfully!")
 
         # Show the created profile
         print("\n" + format_profile_details(profile))
@@ -177,10 +177,10 @@ def cmd_create_profile(args: argparse.Namespace) -> int:
         return 0
 
     except InvalidConfigurationError as e:
-        print(f"❌ Configuration error: {e}", file=sys.stderr)
+        print(f" Configuration error: {e}", file=sys.stderr)
         return 1
     except Exception as e:
-        print(f"❌ Failed to create profile: {e}", file=sys.stderr)
+        print(f" Failed to create profile: {e}", file=sys.stderr)
         return 1
 
 
@@ -196,7 +196,7 @@ def cmd_validate_profile(args: argparse.Namespace) -> int:
         for name in sorted(profiles.keys()):
             is_valid, errors, warnings = manager.validate_profile(name)
 
-            status = "✅" if is_valid else "❌"
+            status = "Yes" if is_valid else "No"
             print(f"{status} {name}")
 
             if errors:
@@ -215,18 +215,18 @@ def cmd_validate_profile(args: argparse.Namespace) -> int:
         is_valid, errors, warnings = manager.validate_profile(args.name)
 
         if not manager.get_profile(args.name):
-            print(f"❌ Profile '{args.name}' not found.", file=sys.stderr)
+            print(f" Profile '{args.name}' not found.", file=sys.stderr)
             return 1
 
         if is_valid:
-            print(f"✅ Profile '{args.name}' is valid")
+            print(f" Profile '{args.name}' is valid")
         else:
-            print(f"❌ Profile '{args.name}' has validation errors:")
+            print(f" Profile '{args.name}' has validation errors:")
             for error in errors:
                 print(f"  - {error}")
 
         if warnings:
-            print("⚠️  Warnings:")
+            print(" Warnings:")
             for warning in warnings:
                 print(f"  - {warning}")
 
@@ -239,13 +239,13 @@ def cmd_delete_profile(args: argparse.Namespace) -> int:
 
     try:
         if manager.delete_profile(args.name):
-            print(f"✅ Profile '{args.name}' deleted successfully!")
+            print(f" Profile '{args.name}' deleted successfully!")
             return 0
         else:
-            print(f"❌ Profile '{args.name}' not found.", file=sys.stderr)
+            print(f" Profile '{args.name}' not found.", file=sys.stderr)
             return 1
     except InvalidConfigurationError as e:
-        print(f"❌ {e}", file=sys.stderr)
+        print(f" {e}", file=sys.stderr)
         return 1
 
 
@@ -255,7 +255,7 @@ def cmd_export_profile(args: argparse.Namespace) -> int:
     profile = manager.get_profile(args.name)
 
     if profile is None:
-        print(f"❌ Profile '{args.name}' not found.", file=sys.stderr)
+        print(f" Profile '{args.name}' not found.", file=sys.stderr)
         return 1
 
     try:
@@ -264,13 +264,13 @@ def cmd_export_profile(args: argparse.Namespace) -> int:
         if args.output:
             with open(args.output, "w") as f:
                 f.write(yaml_content)
-            print(f"✅ Profile exported to {args.output}")
+            print(f" Profile exported to {args.output}")
         else:
             print(yaml_content)
 
         return 0
     except Exception as e:
-        print(f"❌ Failed to export profile: {e}", file=sys.stderr)
+        print(f" Failed to export profile: {e}", file=sys.stderr)
         return 1
 
 
@@ -333,10 +333,10 @@ def main() -> int:
     try:
         return args.func(args)
     except KeyboardInterrupt:
-        print("\n❌ Cancelled by user.", file=sys.stderr)
+        print("\n Cancelled by user.", file=sys.stderr)
         return 1
     except Exception as e:
-        print(f"❌ Unexpected error: {e}", file=sys.stderr)
+        print(f" Unexpected error: {e}", file=sys.stderr)
         return 1
 
 
