@@ -20,14 +20,14 @@ class InsufficientResourcesError(DaskSetupError):
         self.suggested_actions = suggested_actions or []
 
         message = (
-            f" Insufficient memory for configuration:\n"
+            f"❌ Insufficient memory for configuration:\n"
             f"   - Required: {required_mem:.1f} GB\n"
             f"   - Available: {available_mem:.1f} GB\n"
             f"   - Shortfall: {required_mem - available_mem:.1f} GB"
         )
 
         if self.suggested_actions:
-            message += "\n\n Suggestions:\n" + "\n".join(
+            message += "\n\n💡 Suggestions:\n" + "\n".join(
                 f"   {i + 1}. {action}" for i, action in enumerate(self.suggested_actions)
             )
 

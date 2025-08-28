@@ -111,19 +111,19 @@ class EnhancedDaskSetupError(DaskSetupError):
 
         # Error header with emoji and code
         if self.error_code:
-            lines.append(f" [{self.error_code}] {message}")
+            lines.append(f"❌ [{self.error_code}] {message}")
         else:
-            lines.append(f" {message}")
+            lines.append(f"❌ {message}")
 
         # Add suggestions if available
         if self.suggestions:
-            lines.append("\n Suggestions:")
+            lines.append("\n💡 Suggestions:")
             for i, suggestion in enumerate(self.suggestions, 1):
                 lines.append(f"   {i}. {suggestion}")
 
         # Add documentation link if available
         if self.documentation_url:
-            lines.append(f"\n Documentation: {self.documentation_url}")
+            lines.append(f"\n📖 Documentation: {self.documentation_url}")
 
         return "\n".join(lines)
 
