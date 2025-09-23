@@ -4,7 +4,7 @@
 
 A comprehensive **single‑node** Dask setup helper designed for **HPC environments** (especially **Gadi**), with intelligent defaults for CPU-/I/O-bound workloads, advanced configuration management, storage format optimization, and user-friendly error handling. It's a feature-rich wrapper around `dask.distributed.LocalCluster` + `Client` that eliminates trial‑and‑error and provides expert-level optimization out of the box.
 
-**Python Support**: Requires Python 3.11+ | **Installation**: `pip install git@github.com:21centuryweather/dask_setup.git` for development
+**Python Support**: Requires Python 3.11+ | **Installation**: `pip install git+https://github.com/21centuryweather/dask_setup.git` for development
 
 ## Key Features
 
