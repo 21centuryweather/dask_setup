@@ -1,0 +1,38 @@
+name: "cpu_intensive"
+description: "Heavy computation workload optimized for mathematical operations"
+workload_type: "cpu"
+max_workers: null  # Use all available cores
+reserve_mem_gb: 60.0
+max_mem_gb: null
+dashboard: true
+adaptive: false
+min_workers: null
+suggest_chunks: true
+
+# Advanced memory management
+memory_target: 0.75
+memory_spill: 0.85
+memory_pause: 0.92
+memory_terminate: 0.98
+
+# Compression settings
+spill_compression: "lz4"
+comm_compression: false
+
+# Tags for organization
+tags:
+  - "cpu-heavy"
+  - "mathematical"
+  - "scientific"
+  - "single-threaded"
+
+# Comments and documentation
+notes: |
+  This profile is optimized for CPU-intensive workloads that benefit from:
+  - Many single-threaded workers (avoids GIL)
+  - Fast spill compression (lz4)
+  - Conservative memory spilling
+  - Large memory reservation for OS/filesystem caches
+  
+  Best for: NumPy operations, mathematical reductions, xarray computations
+  Avoid for: I/O-heavy operations, small quick tasks

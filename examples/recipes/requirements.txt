@@ -1,0 +1,52 @@
+# Core dependencies for dask_setup recipes
+# These are required for basic functionality
+dask>=2024.1.0
+distributed>=2024.1.0  
+xarray>=2023.1.0
+numpy>=1.20.0
+pandas>=1.3.0
+psutil>=5.9.0
+
+# I/O and storage dependencies
+zarr>=2.10.0
+netcdf4>=1.5.8
+h5netcdf>=1.0.0
+
+# Scientific computing dependencies
+scipy>=1.7.0
+
+# Visualization dependencies
+matplotlib>=3.5.0
+
+# Advanced mapping and geospatial (optional)
+# cartopy>=0.21.0  # Uncomment if needed for advanced climate analysis
+
+# Tool integration dependencies
+rechunker>=0.5.0
+
+# Storage backend support (optional)
+# fsspec[s3]>=2022.1.0  # Uncomment for cloud storage support
+# gcsfs>=2022.1.0       # Uncomment for Google Cloud Storage
+# s3fs>=2022.1.0        # Uncomment for AWS S3
+
+# Development and testing (optional)
+# pytest>=6.0.0
+# pytest-cov>=3.0.0
+# black>=22.0.0
+# ruff>=0.0.254
+
+# HPC and cluster computing (optional)
+# dask-jobqueue>=0.8.0  # For SLURM/PBS integration beyond dask_setup
+
+# Jupyter notebook support (optional)
+# jupyter>=1.0.0
+# ipywidgets>=7.6.0     # For interactive widgets in notebooks
+
+# Performance profiling (optional)  
+# line_profiler>=3.5.0  # For line-by-line profiling
+# memory_profiler>=0.60.0  # For memory usage profiling
+
+# Note: Install with different dependency sets:
+#   pip install -r requirements.txt                    # Core functionality
+#   pip install -r requirements.txt matplotlib         # With plotting
+#   pip install -r requirements.txt matplotlib cartopy # Full featured
