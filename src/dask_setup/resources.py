@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import re
 
 import psutil
 
 from .exceptions import ResourceDetectionError
+from .logging import get_logger
 from .types import ResourceSpec
 
-logger = logging.getLogger(__name__)
+logger = get_logger("resources")
 
 
 def validate_memory_value(value_bytes: int, context: str = "memory") -> None:
@@ -274,29 +274,87 @@ def _detect_psutil_resources() -> ResourceSpec:
         raise ResourceDetectionError(f"psutil resource detection failed: {e}") from e
 
 
-def detect_resources() -> ResourceSpec:
+_FALLBACK_CORES = 2
+_FALLBACK_MEM_BYTES = 8 * 1024**3  # 8 GiB — safe minimum for a single Dask worker
+
+
+def _detect_fallback_resources() -> ResourceSpec:
+    """Return ultra-conservative hardcoded resources when all detection fails.
+
+    These values are intentionally cautious (2 cores, 8 GiB) so that the
+    resulting cluster is safe to run on almost any machine, even if the
+    resulting performance is suboptimal.
+
+    Returns:
+        ResourceSpec with detection_method="fallback"
+    """
+    return ResourceSpec(
+        total_cores=_FALLBACK_CORES,
+        total_mem_bytes=_FALLBACK_MEM_BYTES,
+        detection_method="fallback",
+    )
+
+
+def detect_resources(fallback: bool = False) -> ResourceSpec:
     """Detect available CPU cores and memory from environment.
 
     Detection priority:
     1. SLURM environment variables (SLURM_CPUS_ON_NODE, SLURM_MEM_PER_NODE)
     2. PBS environment variables (NCPUS/PBS_NCPUS, PBS_MEM/PBS_VMEM)
     3. psutil fallback
+    4. Hardcoded conservative defaults — only when ``fallback=True``
+
+    Args:
+        fallback: If True, return conservative hardcoded defaults (2 cores,
+            8 GiB) instead of raising :exc:`ResourceDetectionError` when all
+            detection methods fail.  A warning is logged in this case.
+            Default: False (raise on failure, existing behaviour).
 
     Returns:
         ResourceSpec with detected resources
 
     Raises:
-        ResourceDetectionError: If all detection methods fail
+        ResourceDetectionError: If all detection methods fail and
+            ``fallback=False`` (default).
     """
     # Try SLURM first
     slurm_resources = _detect_slurm_resources()
     if slurm_resources is not None:
+        logger.info(
+            "Resources detected via SLURM",
+            total_cores=slurm_resources.total_cores,
+            total_mem_gib=f"{slurm_resources.total_mem_bytes / (1024**3):.1f}",
+        )
         return slurm_resources
 
     # Try PBS next
     pbs_resources = _detect_pbs_resources()
     if pbs_resources is not None:
+        logger.info(
+            "Resources detected via PBS",
+            total_cores=pbs_resources.total_cores,
+            total_mem_gib=f"{pbs_resources.total_mem_bytes / (1024**3):.1f}",
+        )
         return pbs_resources
 
     # Fall back to psutil
-    return _detect_psutil_resources()
+    try:
+        psutil_resources = _detect_psutil_resources()
+        logger.info(
+            "Resources detected via psutil (no HPC scheduler detected)",
+            total_cores=psutil_resources.total_cores,
+            total_mem_gib=f"{psutil_resources.total_mem_bytes / (1024**3):.1f}",
+        )
+        return psutil_resources
+    except ResourceDetectionError:
+        if fallback:
+            fb = _detect_fallback_resources()
+            logger.warning(
+                "All resource detection methods failed — using conservative hardcoded fallback. "
+                "Set fallback_on_detection_failure=False (or fix the environment) to see the "
+                "original error.",
+                fallback_cores=fb.total_cores,
+                fallback_mem_gib=f"{fb.total_mem_bytes / (1024**3):.1f}",
+            )
+            return fb
+        raise

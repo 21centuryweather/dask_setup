@@ -8,7 +8,10 @@ from pathlib import Path
 import dask
 from dask.distributed import LocalCluster
 
+from .logging import get_logger
 from .types import MemorySpec, TopologySpec
+
+logger = get_logger("cluster")
 
 
 def calculate_memory_spec(
@@ -107,6 +110,14 @@ def configure_dask_settings(
     if spill_threads is not None:
         config_dict["distributed.worker.io-threads"] = spill_threads
 
+    logger.debug(
+        "Dask global settings applied",
+        temp_dir=temp_dir_str,
+        memory_target=memory_target,
+        memory_spill=memory_spill,
+        spill_compression=spill_compression,
+        spill_threads=spill_threads,
+    )
     dask.config.set(config_dict)
 
 
@@ -170,9 +181,17 @@ def create_cluster(
         silence_logs=silence_logs,
     )
 
+    logger.debug(
+        "LocalCluster created",
+        n_workers=topology.n_workers,
+        threads_per_worker=topology.threads_per_worker,
+        mem_per_worker_gib=f"{memory_spec.mem_per_worker_bytes / (1024**3):.1f}",
+    )
+
     # Enable adaptive scaling if requested
     if adaptive:
         min_w = min_workers if min_workers is not None else max(1, topology.n_workers // 2)
         cluster.adapt(minimum=min_w, maximum=topology.n_workers, wait_count=2)
+        logger.debug("Adaptive scaling enabled", minimum=min_w, maximum=topology.n_workers)
 
     return cluster

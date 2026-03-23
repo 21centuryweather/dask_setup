@@ -8,13 +8,16 @@ A drop-in convenience wrapper around dask.distributed.LocalCluster + Client that
 - Provides SSH tunnel commands for dashboard access on HPC systems
 """
 
-from .client import setup_dask_client
+from .client import DaskClientContext, setup_dask_client
 from .config import DaskSetupConfig
 from .config_manager import ConfigManager
+from .environment import get_environment_type, is_jupyter
+from .logging import configure_logging, get_logger
+from .reporting import ClusterReport, cluster_report
 
 # Xarray integration (optional — requires xarray + numpy)
 try:
-    from .xarray import recommend_chunks
+    from .xarray import ChunkRecommendation, recommend_chunks, validate_chunks
 
     _xarray_available = True
 except ImportError:
@@ -24,6 +27,36 @@ except ImportError:
         raise ImportError(
             "recommend_chunks requires xarray and numpy. "
             "Install with: pip install xarray numpy"
+        )
+
+    def validate_chunks(*args, **kwargs):
+        raise ImportError(
+            "validate_chunks requires xarray and numpy. "
+            "Install with: pip install xarray numpy"
+        )
+
+    class ChunkRecommendation:  # type: ignore[no-redef]
+        """Placeholder — requires xarray and numpy."""
+
+        def __new__(cls, *args, **kwargs):
+            raise ImportError(
+                "ChunkRecommendation requires xarray and numpy. "
+                "Install with: pip install xarray numpy"
+            )
+
+
+# Rechunking helper (optional — requires rechunker + zarr)
+try:
+    from .rechunk import rechunk_dataset
+
+    _rechunker_available = True
+except ImportError:
+    _rechunker_available = False
+
+    def rechunk_dataset(*args, **kwargs):
+        raise ImportError(
+            "rechunk_dataset requires rechunker and zarr. "
+            "Install with: pip install rechunker zarr"
         )
 
 
@@ -136,15 +169,29 @@ except ImportError:
         )
 
 
-__version__ = "1.0.0"
+__version__ = "1.4.0"
 
 __all__ = [
     # Core API — always available
     "setup_dask_client",
+    "DaskClientContext",
     "DaskSetupConfig",
     "ConfigManager",
+    # Environment detection
+    "is_jupyter",
+    "get_environment_type",
+    # Logging helpers
+    "configure_logging",
+    "get_logger",
+    # Post-run reporting
+    "ClusterReport",
+    "cluster_report",
     # Xarray helpers — require xarray + numpy
     "recommend_chunks",
+    "validate_chunks",
+    "ChunkRecommendation",
+    # Rechunking helper — requires rechunker + zarr
+    "rechunk_dataset",
     # I/O pattern helpers — require zarr / netcdf4
     "recommend_io_chunks",
     "detect_storage_format",

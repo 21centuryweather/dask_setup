@@ -5,7 +5,10 @@ from __future__ import annotations
 import math
 
 from .exceptions import InvalidConfigurationError
+from .logging import get_logger
 from .types import TopologySpec
+
+logger = get_logger("topology")
 
 
 def decide_topology(
@@ -71,12 +74,20 @@ def decide_topology(
     # Ensure we have at least 1 worker
     n_workers = max(1, n_workers)
 
-    return TopologySpec(
+    topology = TopologySpec(
         n_workers=n_workers,
         threads_per_worker=threads_per_worker,
         processes=processes,
         workload_type=workload_type,
     )
+    logger.debug(
+        "Topology decided",
+        workload_type=workload_type,
+        n_workers=n_workers,
+        threads_per_worker=threads_per_worker,
+        processes=processes,
+    )
+    return topology
 
 
 def validate_topology(topology: TopologySpec, total_cores: int) -> None:
@@ -106,10 +117,12 @@ def validate_topology(topology: TopologySpec, total_cores: int) -> None:
         )
 
     # Warn about configurations that might be suboptimal
-    # (These are warnings, not errors, so we don't raise exceptions)
     if topology.processes and topology.threads_per_worker > 4:
-        # Many threads per process can reduce benefits of multiprocessing
-        pass
+        logger.warning(
+            "High threads_per_worker with multiple processes — consider workload_type='io'",
+            threads_per_worker=topology.threads_per_worker,
+            n_workers=topology.n_workers,
+        )
 
     if not topology.processes and topology.n_workers > 1:
         # Multiple workers without processes doesn't make sense

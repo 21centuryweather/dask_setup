@@ -427,7 +427,14 @@ class StorageConfigurationError(EnhancedDaskSetupError):
 
 
 class ClusterSetupError(EnhancedDaskSetupError):
-    """Enhanced cluster setup error with diagnostic information."""
+    """Enhanced cluster setup error with diagnostic information.
+
+    Unlike other :class:`EnhancedDaskSetupError` subclasses, ``ClusterSetupError``
+    automatically appends an environment summary (platform, Python version,
+    memory, CPUs, and detected dependencies) to the formatted error message.
+    This makes it easier to diagnose failures without separately calling
+    :meth:`~EnhancedDaskSetupError.get_diagnostic_info`.
+    """
 
     def __init__(
         self,
@@ -451,6 +458,22 @@ class ClusterSetupError(EnhancedDaskSetupError):
             error_code="CLUSTER_SETUP",
             documentation_url="https://github.com/dask-contrib/dask_setup#cluster-setup",
         )
+
+    def _format_error_message(self, message: str) -> str:
+        """Extend the standard error message with an environment summary.
+
+        The environment summary is appended as a ``🔍 Environment:`` section
+        so that the full diagnostic context is visible whenever the exception
+        is printed or logged — without needing to call
+        :meth:`get_diagnostic_info` separately.
+        """
+        base = super()._format_error_message(message)
+        try:
+            env_summary = self.context.get_environment_summary()
+            return f"{base}\n\n🔍 Environment:\n{env_summary}"
+        except Exception:
+            # Never let summary generation mask the original error
+            return base
 
     def _generate_cluster_suggestions(self, context: ErrorContext) -> list[str]:
         """Generate cluster setup suggestions based on context."""

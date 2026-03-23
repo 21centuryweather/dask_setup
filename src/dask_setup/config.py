@@ -54,6 +54,9 @@ class DaskSetupConfig:
     io_storage_location: str = "auto"  # "local", "cloud", "network", "auto"
     io_compression_level: int | None = None  # Override default compression level
 
+    # Resilience options
+    fallback_on_detection_failure: bool = False
+
     # Profile metadata
     name: str = ""
     description: str = ""
@@ -238,6 +241,8 @@ class DaskSetupConfig:
             "io_access_pattern": self.io_access_pattern,
             "io_storage_location": self.io_storage_location,
             "io_compression_level": self.io_compression_level,
+            # Resilience options
+            "fallback_on_detection_failure": self.fallback_on_detection_failure,
             # Metadata
             "name": self.name,
             "description": self.description,

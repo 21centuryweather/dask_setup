@@ -38,7 +38,7 @@ except ImportError:
 
 import psutil
 
-__all__ = ["recommend_chunks"]
+__all__ = ["recommend_chunks", "validate_chunks", "ChunkRecommendation"]
 
 
 class XarrayDependencyError(ImportError):
@@ -636,3 +636,118 @@ def recommend_chunks(
     else:
         # Return simple chunk dict
         return dict(recommendation.chunks)
+
+
+def validate_chunks(
+    ds: xr.Dataset | xr.DataArray,
+    client: Client | None = None,
+    max_chunk_ratio: float = 0.5,
+    min_chunk_mb: float = 10.0,
+) -> list[str]:
+    """Validate existing chunk sizes against cluster memory limits.
+
+    Compares each dimension's current chunk size to the per-worker memory
+    available in the cluster, and warns when chunks are dangerously large
+    (OOM risk) or very small (high task-graph overhead).
+
+    This function is called automatically by :func:`setup_dask_client` when
+    a dataset is passed via the ``ds=`` parameter.
+
+    Parameters
+    ----------
+    ds : xr.Dataset or xr.DataArray
+        Dataset with existing chunking to validate.
+    client : dask.distributed.Client or None
+        Active Dask client used to read per-worker memory limits.
+        When None, falls back to system psutil memory detection.
+    max_chunk_ratio : float
+        Maximum acceptable fraction of per-worker memory per chunk.
+        Default 0.5 — chunks larger than 50 % of worker memory trigger a warning.
+    min_chunk_mb : float
+        Minimum acceptable chunk size in MiB. Default 10 MiB.
+        Chunks smaller than this trigger a task-overhead warning.
+
+    Returns
+    -------
+    list[str]
+        Warning messages (empty list if no issues found). The same messages
+        are also emitted via :func:`warnings.warn` so they appear in logs.
+
+    Examples
+    --------
+    ::
+
+        issues = validate_chunks(ds, client)
+        if issues:
+            chunks = recommend_chunks(ds, client)
+            ds = ds.chunk(chunks)
+    """
+    _ensure_xarray_available()
+
+    cluster_info = _get_cluster_info(client)
+    dataset_info = _analyze_dataset(ds)
+
+    if not dataset_info["is_currently_chunked"]:
+        return []  # Dataset has no existing chunks — nothing to validate
+
+    current_chunking = dataset_info["current_chunking"]
+    variables = dataset_info["variables"]
+    dims = dataset_info["dims"]
+
+    if not variables:
+        return []
+
+    worker_memory_bytes = cluster_info["memory_limit_bytes"]
+    max_chunk_bytes = worker_memory_bytes * max_chunk_ratio
+    min_chunk_bytes = min_chunk_mb * 1024 * 1024
+
+    # Use the largest variable as representative for memory estimates
+    main_var = max(variables.values(), key=lambda v: v["size_bytes"])
+    dtype_size = np.dtype(main_var["dtype"]).itemsize
+    main_var_dims = main_var["dims"]
+
+    warning_messages: list[str] = []
+
+    for dim, chunk_sizes in current_chunking.items():
+        if dim not in main_var_dims:
+            continue
+
+        # Normalise chunk size representation (may be int, list, or tuple)
+        if isinstance(chunk_sizes, list | tuple) and chunk_sizes:
+            representative_chunk = max(chunk_sizes)
+        elif isinstance(chunk_sizes, int):
+            representative_chunk = chunk_sizes
+        else:
+            continue
+
+        # Estimate bytes for one chunk of this dimension
+        # (holds all other dimensions at their full size)
+        bytes_per_record = dtype_size
+        for other_dim in main_var_dims:
+            if other_dim != dim:
+                bytes_per_record *= dims.get(other_dim, 1)
+
+        chunk_bytes = representative_chunk * bytes_per_record
+        chunk_mb = chunk_bytes / (1024 * 1024)
+
+        if chunk_bytes > max_chunk_bytes:
+            worker_mem_gib = worker_memory_bytes / (1024**3)
+            msg = (
+                f"Dimension '{dim}': chunk is {chunk_mb:.0f} MiB, which exceeds "
+                f"{max_chunk_ratio * 100:.0f}% of per-worker memory "
+                f"({worker_mem_gib:.1f} GiB). "
+                "OOM risk — consider calling recommend_chunks() and rechunking."
+            )
+            warning_messages.append(msg)
+            warnings.warn(msg, UserWarning, stacklevel=2)
+
+        elif chunk_bytes < min_chunk_bytes:
+            msg = (
+                f"Dimension '{dim}': chunk is only {chunk_mb:.2f} MiB "
+                f"(below {min_chunk_mb:.0f} MiB minimum). "
+                "High task-graph overhead likely — consider larger chunks."
+            )
+            warning_messages.append(msg)
+            warnings.warn(msg, UserWarning, stacklevel=2)
+
+    return warning_messages

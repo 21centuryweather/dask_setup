@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-import logging
+import time
+import types
+from typing import TYPE_CHECKING, Any, overload
 
+import psutil
 from dask.distributed import Client, LocalCluster
 
 from .cluster import calculate_memory_spec, create_cluster
@@ -11,9 +14,39 @@ from .config import DaskSetupConfig
 from .config_manager import ConfigManager
 from .dashboard import print_dashboard_info
 from .exceptions import InsufficientResourcesError
+from .logging import get_logger
 from .resources import detect_resources
 from .tempdir import create_dask_temp_dir
 from .topology import decide_topology, validate_topology
+
+if TYPE_CHECKING:
+    import xarray as xr
+
+logger = get_logger("client")
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _compute_smart_reserve_default() -> float:
+    """Compute a sensible reserve_mem_gb default based on available system RAM.
+
+    Formula: 20 % of total RAM, minimum 4 GiB, maximum 50 GiB.
+
+    Examples
+    --------
+    - 16 GiB laptop  → max(4.0, 3.2)  = 4.0 GiB  (clamped to minimum)
+    - 64 GiB workstation → 12.8 GiB
+    - 300 GiB Gadi node  → min(50.0, 60.0) = 50.0 GiB  (clamped to maximum)
+
+    Falls back to 50.0 GiB if psutil fails for any reason.
+    """
+    try:
+        total_ram_gb = psutil.virtual_memory().total / (1024**3)
+        return min(50.0, max(4.0, total_ram_gb * 0.20))
+    except Exception:
+        return 50.0  # Safe HPC fallback if psutil is unexpectedly unavailable
 
 
 def _resolve_configuration(
@@ -21,30 +54,45 @@ def _resolve_configuration(
     profile: str | None = None,
     workload_type: str = "io",
     max_workers: int | None = None,
-    reserve_mem_gb: float = 50.0,
+    reserve_mem_gb: float | None = None,
     max_mem_gb: float | None = None,
     dashboard: bool = True,
     adaptive: bool = False,
     min_workers: int | None = None,
     suggest_chunks: bool = False,
+    fallback_on_detection_failure: bool = False,
 ) -> DaskSetupConfig:
     """Resolve final configuration from a config object, profile, and explicit parameters.
 
     Priority order (highest to lowest):
-    1. Explicit keyword parameters passed to setup_dask_client()
-    2. Config object (if provided via ``config=``)  OR  profile (if provided via ``profile=``)
-    3. Default values
+
+    1. Explicit keyword parameters passed to ``setup_dask_client()``
+    2. Config object (``config=``) **or** profile (``profile=``)
+    3. Defaults — ``reserve_mem_gb`` uses a smart default (20 % RAM, 4–50 GiB)
 
     ``config`` and ``profile`` are mutually exclusive.
 
     Args:
         config: A pre-built DaskSetupConfig object to use as the base configuration.
         profile: Profile name to load from disk/builtins as the base configuration.
-        workload_type: Workload type override (only applied when it differs from the default "io").
-        **kwargs: Additional explicit overrides forwarded from setup_dask_client().
+        workload_type: Workload type override.
+        max_workers: Maximum workers cap.
+        reserve_mem_gb: Memory to reserve (GiB). ``None`` → compute smart default.
+        max_mem_gb: Total memory cap (GiB).
+        dashboard: Whether to start the dashboard.
+        adaptive: Enable adaptive scaling.
+        min_workers: Minimum workers when adaptive=True.
+        suggest_chunks: Print xarray chunking hints after setup.
 
     Returns:
         Resolved DaskSetupConfig
+
+    Note:
+        The heuristic that detects "explicitly set" parameters compares each value
+        against its default.  Edge case: if you deliberately pass a value equal to
+        the default (e.g. ``dashboard=True``) it will be treated as "not set" and a
+        base_config value will take precedence.  Use ``config=DaskSetupConfig(...)``
+        to avoid this ambiguity entirely.
     """
     if config is not None and profile is not None:
         raise ValueError(
@@ -52,8 +100,10 @@ def _resolve_configuration(
             "Pass a DaskSetupConfig object via 'config=' OR a profile name via 'profile=', not both."
         )
 
-    # Start with defaults
-    defaults = DaskSetupConfig()
+    # Build defaults using the environment-aware smart reserve
+    smart_reserve = _compute_smart_reserve_default()
+    defaults = DaskSetupConfig(reserve_mem_gb=smart_reserve)
+    logger.debug("Smart reserve default computed", reserve_mem_gb=smart_reserve)
 
     # Resolve the base configuration: either a provided config object or a loaded profile
     base_config = None
@@ -61,6 +111,7 @@ def _resolve_configuration(
     if config is not None:
         # Caller supplied a ready-made DaskSetupConfig — use it as the profile-level base
         base_config = config
+        logger.debug("Using caller-provided DaskSetupConfig as base")
     elif profile is not None:
         manager = ConfigManager()
         profile_obj = manager.get_profile(profile)
@@ -68,21 +119,23 @@ def _resolve_configuration(
             available = list(manager.list_profiles().keys())
             raise ValueError(f"Profile '{profile}' not found. Available profiles: {available}")
         base_config = profile_obj.config
+        logger.debug("Loaded profile as base", profile=profile)
 
     # Collect explicitly-provided keyword overrides.
     #
     # Note: This heuristic compares each value against its default to decide whether it was
     # explicitly set. Edge case: if you deliberately pass a value that *equals* the default
-    # (e.g. reserve_mem_gb=50.0 when the default is 50.0) it will be treated as "not set"
+    # (e.g. reserve_mem_gb equal to the computed smart default) it will be treated as "not set"
     # and a base_config value will take precedence. To avoid this, use a DaskSetupConfig
     # object via the 'config=' parameter instead.
-    explicit_params = {}
+    explicit_params: dict[str, Any] = {}
 
     if workload_type != "io":
         explicit_params["workload_type"] = workload_type
     if max_workers is not None:
         explicit_params["max_workers"] = max_workers
-    if reserve_mem_gb != 50.0:
+    if reserve_mem_gb is not None:
+        # None means "use the smart default"; an explicit float means "user chose this"
         explicit_params["reserve_mem_gb"] = reserve_mem_gb
     if max_mem_gb is not None:
         explicit_params["max_mem_gb"] = max_mem_gb
@@ -94,6 +147,8 @@ def _resolve_configuration(
         explicit_params["min_workers"] = min_workers
     if suggest_chunks is not False:
         explicit_params["suggest_chunks"] = suggest_chunks
+    if fallback_on_detection_failure:
+        explicit_params["fallback_on_detection_failure"] = fallback_on_detection_failure
 
     explicit_config = DaskSetupConfig(**explicit_params) if explicit_params else None
 
@@ -107,10 +162,138 @@ def _resolve_configuration(
     return final_config
 
 
+# ---------------------------------------------------------------------------
+# Public API — context manager
+# ---------------------------------------------------------------------------
+
+class DaskClientContext:
+    """Context manager wrapper for :func:`setup_dask_client`.
+
+    Ensures the Dask client and cluster are closed cleanly on exit — even
+    when an exception is raised inside the ``with`` block.
+
+    All keyword arguments accepted by :func:`setup_dask_client` are valid.
+
+    When a dataset is passed via ``ds=``, the context manager yields a
+    4-tuple ``(client, cluster, tmp, chunks)`` where *chunks* is the
+    recommended chunk dictionary for that dataset.  Without ``ds=``, the
+    familiar 3-tuple ``(client, cluster, tmp)`` is yielded.
+
+    Examples
+    --------
+    ::
+
+        from dask_setup import DaskClientContext
+
+        # 3-tuple form (no dataset)
+        with DaskClientContext(workload_type="cpu") as (client, cluster, tmp):
+            result = client.compute(ds.mean())
+
+        # 4-tuple form (with dataset — chunks auto-computed)
+        with DaskClientContext(ds=my_ds, suggest_chunks=True) as (client, cluster, tmp, chunks):
+            ds_opt = my_ds.chunk(chunks)
+            result = client.compute(ds_opt.mean())
+
+    The context manager does **not** delete the spill/temp directory on exit
+    so that users can inspect spill artefacts for debugging if needed.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._kwargs = kwargs
+        self._client: Client | None = None
+        self._cluster: LocalCluster | None = None
+        self._tmp_dir: str | None = None
+        self.chunks: dict[str, int] | None = None
+        self._start_time: float | None = None
+
+    def __enter__(self) -> tuple:
+        self._start_time = time.monotonic()
+        result = setup_dask_client(**self._kwargs)
+        self._client = result[0]
+        self._cluster = result[1]
+        self._tmp_dir = result[2]
+        if len(result) == 4:
+            self.chunks = result[3]
+        return result
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
+        # Collect run statistics before closing the client
+        if self._client is not None:
+            try:
+                from .reporting import cluster_report
+
+                report = cluster_report(self._client, start_time=self._start_time)
+                logger.info("Cluster run summary: " + report.summary_line())
+            except Exception as e:
+                logger.debug("Could not collect cluster report on exit", error=str(e))
+
+        if self._client is not None:
+            try:
+                self._client.close()
+                logger.debug("Dask client closed via context manager")
+            except Exception as e:
+                logger.warning("Failed to close Dask client cleanly", error=str(e))
+        if self._cluster is not None:
+            try:
+                self._cluster.close()
+                logger.debug("Dask cluster closed via context manager")
+            except Exception as e:
+                logger.warning("Failed to close Dask cluster cleanly", error=str(e))
+        # Return None (falsy) — do not suppress any exception from the with block
+
+
+# ---------------------------------------------------------------------------
+# Public API — main entry point
+# ---------------------------------------------------------------------------
+
+# Overloads give callers accurate return-type information at static-analysis time.
+# When ds=None (default), the return is a 3-tuple.
+# When ds is an xarray object, the return is a 4-tuple that also contains the
+# computed chunk dictionary.
+
+@overload
+def setup_dask_client(
+    workload_type: str = ...,
+    max_workers: int | None = ...,
+    reserve_mem_gb: float | None = ...,
+    max_mem_gb: float | None = ...,
+    dashboard: bool = ...,
+    adaptive: bool = ...,
+    min_workers: int | None = ...,
+    profile: str | None = ...,
+    suggest_chunks: bool = ...,
+    config: DaskSetupConfig | None = ...,
+    ds: None = ...,
+    fallback_on_detection_failure: bool = ...,
+) -> tuple[Client, LocalCluster, str]: ...
+
+
+@overload
+def setup_dask_client(
+    workload_type: str = ...,
+    max_workers: int | None = ...,
+    reserve_mem_gb: float | None = ...,
+    max_mem_gb: float | None = ...,
+    dashboard: bool = ...,
+    adaptive: bool = ...,
+    min_workers: int | None = ...,
+    profile: str | None = ...,
+    suggest_chunks: bool = ...,
+    config: DaskSetupConfig | None = ...,
+    ds: xr.Dataset | xr.DataArray = ...,
+    fallback_on_detection_failure: bool = ...,
+) -> tuple[Client, LocalCluster, str, dict[str, int]]: ...
+
+
 def setup_dask_client(
     workload_type: str = "io",
     max_workers: int | None = None,
-    reserve_mem_gb: float = 50.0,
+    reserve_mem_gb: float | None = None,
     max_mem_gb: float | None = None,
     dashboard: bool = True,
     adaptive: bool = False,
@@ -118,10 +301,12 @@ def setup_dask_client(
     profile: str | None = None,
     suggest_chunks: bool = False,
     config: DaskSetupConfig | None = None,
-) -> tuple[Client, LocalCluster, str]:
+    ds: Any = None,  # xr.Dataset | xr.DataArray | None
+    fallback_on_detection_failure: bool = False,
+) -> tuple[Client, LocalCluster, str] | tuple[Client, LocalCluster, str, dict[str, int]]:
     """Create a single-node Dask LocalCluster tuned for HPC login/compute nodes.
 
-    Routes temp/spill to $PBS_JOBFS when present.
+    Routes temp/spill to ``$PBS_JOBFS`` when present.
 
     Parameters
     ----------
@@ -129,8 +314,11 @@ def setup_dask_client(
         Shape worker topology for CPU-bound, I/O-bound, or mixed workloads.
     max_workers : int or None
         Cap on worker processes. Defaults to all logical cores available.
-    reserve_mem_gb : float
+    reserve_mem_gb : float or None
         Memory to reserve for OS / cache / filesystem (GiB).
+        When ``None`` (the default), a smart default is chosen automatically:
+        20 % of total RAM, clamped to [4 GiB, 50 GiB].
+        Pass an explicit value to override (e.g. ``reserve_mem_gb=8.0``).
     max_mem_gb : float or None
         Cap total memory used by Dask. Default is node total.
     dashboard : bool
@@ -144,19 +332,40 @@ def setup_dask_client(
         explicit parameters. Mutually exclusive with ``config``.
     suggest_chunks : bool
         If True, print xarray chunking recommendations after cluster setup.
+        When ``ds=`` is also provided, the recommendations are computed from
+        the actual dataset.  Without ``ds=``, generic guidance is printed.
         Requires xarray and numpy to be installed.
     config : DaskSetupConfig or None
         A pre-built configuration object. When provided, all other parameters
         except explicit overrides are ignored. Mutually exclusive with ``profile``.
         This is the recommended way to avoid the default-value ambiguity that
         occurs with individual keyword parameters.
+    ds : xr.Dataset, xr.DataArray, or None
+        Optional xarray dataset.  When provided:
+
+        - Chunk validation is run automatically (warnings emitted for
+          dangerously large or very small existing chunks).
+        - Chunk recommendations are computed for the specific dataset and
+          cluster configuration, and returned as the fourth element of the
+          return tuple.
+        - If ``suggest_chunks=True``, the recommendations are also printed.
+
+        Requires xarray and numpy to be installed.
+    fallback_on_detection_failure : bool
+        If ``True``, use conservative hardcoded defaults (2 cores, 8 GiB) when
+        all resource detection methods fail, instead of raising
+        :exc:`ResourceDetectionError`.  A warning is logged.
+        Default ``False`` preserves the existing behaviour of raising on failure.
 
     Returns
     -------
-    client : dask.distributed.Client
-    cluster : dask.distributed.LocalCluster
-    dask_local_dir : str
-        Absolute path to the temp/spill directory (under $PBS_JOBFS if available).
+    When ``ds`` is ``None`` (default):
+        ``(client, cluster, dask_local_dir)`` — a 3-tuple.
+
+    When ``ds`` is provided:
+        ``(client, cluster, dask_local_dir, chunks)`` — a 4-tuple, where
+        *chunks* is a ``dict[str, int]`` of recommended chunk sizes for that
+        dataset (can be passed directly to ``ds.chunk(chunks)``).
 
     Raises
     ------
@@ -166,7 +375,31 @@ def setup_dask_client(
         If system resources are insufficient for the requested configuration.
     ResourceDetectionError
         If resource detection fails completely.
+
+    See Also
+    --------
+    DaskClientContext : Context manager version that closes the cluster on exit.
+    validate_chunks   : Validate existing chunking against cluster memory limits.
+    recommend_chunks  : Standalone chunk recommendation function.
+    rechunk_dataset   : Rechunk a dataset to new target chunk sizes.
+
+    Examples
+    --------
+    ::
+
+        # Basic usage (3-tuple)
+        client, cluster, tmp = setup_dask_client(workload_type="io")
+
+        # With dataset — chunk validation + recommendations (4-tuple)
+        ds = xr.open_zarr("era5.zarr")
+        client, cluster, tmp, chunks = setup_dask_client(ds=ds, suggest_chunks=True)
+        ds_opt = ds.chunk(chunks)
     """
+    from .environment import get_environment_type, is_jupyter
+
+    env_type = get_environment_type()
+    logger.info("Starting Dask client setup", workload_type=workload_type, environment=env_type)
+
     # Load and merge configuration
     config = _resolve_configuration(
         config=config,
@@ -179,13 +412,35 @@ def setup_dask_client(
         adaptive=adaptive,
         min_workers=min_workers,
         suggest_chunks=suggest_chunks,
+        fallback_on_detection_failure=fallback_on_detection_failure,
+    )
+    logger.debug(
+        "Configuration resolved",
+        workload_type=config.workload_type,
+        reserve_mem_gb=config.reserve_mem_gb,
     )
 
     # Detect system resources
-    resources = detect_resources()
+    resources = detect_resources(fallback=config.fallback_on_detection_failure)
+    logger.debug(
+        "Resources detected",
+        total_cores=resources.total_cores,
+        total_mem_gib=f"{resources.total_mem_bytes / (1024**3):.1f}",
+        method=resources.detection_method,
+    )
+    if resources.detection_method == "fallback":
+        logger.warning(
+            "Using fallback resource defaults — cluster will be conservative. "
+            "Pass fallback_on_detection_failure=False to raise an error instead.",
+            cores=resources.total_cores,
+            mem_gib=f"{resources.total_mem_bytes / (1024**3):.1f}",
+        )
+    if is_jupyter():
+        logger.debug("Jupyter environment detected — dashboard link will be rendered as HTML")
 
     # Create temporary directory for spill files (use config for base dir if specified)
     temp_dir = create_dask_temp_dir(base_dir=config.temp_base_dir)
+    logger.debug("Temp/spill directory created", path=str(temp_dir))
 
     # Decide worker topology based on workload type
     topology = decide_topology(
@@ -239,7 +494,11 @@ def setup_dask_client(
     # Map the boolean silence_logs config to a logging level.
     # True  → suppress everything except errors (logging.ERROR)
     # False → show warnings and above (logging.WARNING), which is a reasonable HPC default
-    silence_logs_level = logging.ERROR if config.silence_logs else logging.WARNING
+    import logging as _stdlib_logging
+
+    silence_logs_level = (
+        _stdlib_logging.ERROR if config.silence_logs else _stdlib_logging.WARNING
+    )
 
     cluster = create_cluster(
         topology=topology,
@@ -264,51 +523,83 @@ def setup_dask_client(
     # Print dashboard info if enabled
     if config.dashboard:
         print_dashboard_info(client, silent=config.silence_logs)
-        if not config.silence_logs:
-            print()  # Add blank line
 
-    # Print summary information
+    # Log setup summary via structured logger
     spill_threads_str = (
         f" | spill_threads={config.spill_threads}" if config.spill_threads is not None else ""
     )
-    print(
-        f"[setup_dask_client] temp/spill dir: {temp_dir}\\n"
-        f"Workers: {topology.n_workers} | threads/worker: {topology.threads_per_worker} | processes: {topology.processes}\\n"
-        f"Mem: total ~{memory_spec.total_mem_gib:.1f} GiB | usable ~{memory_spec.usable_mem_gb:.1f} GiB | per-worker ~{memory_spec.mem_per_worker_bytes / (1024**3):.1f} GiB\\n"
-        f"Compression: spill={config.spill_compression} | comm={config.comm_compression}{spill_threads_str}"
+    logger.info(f"Temp/spill dir: {temp_dir}")
+    logger.info(
+        f"Workers: {topology.n_workers}"
+        f" | threads/worker: {topology.threads_per_worker}"
+        f" | processes: {topology.processes}"
+    )
+    logger.info(
+        f"Mem: total ~{memory_spec.total_mem_gib:.1f} GiB"
+        f" | usable ~{memory_spec.usable_mem_gb:.1f} GiB"
+        f" | per-worker ~{memory_spec.mem_per_worker_bytes / (1024**3):.1f} GiB"
+    )
+    logger.info(
+        f"Compression: spill={config.spill_compression}"
+        f" | comm={config.comm_compression}{spill_threads_str}"
     )
 
-    # Print xarray chunking suggestions if enabled
-    if config.suggest_chunks:
-        try:
-            # Try to import xarray module to check availability
+    # --- Dataset-aware chunking (ds= parameter) ------------------------------
+    chunk_recommendations: dict[str, int] | None = None
 
-            print("\n" + "=" * 60)
-            print(" Xarray Chunking Recommendations")
-            print("=" * 60)
-            print(
-                "To get optimal chunking suggestions for your xarray datasets:\n"
-                "\n"
-                "  from dask_setup import recommend_chunks\n"
-                "  chunks = recommend_chunks(your_dataset, client, verbose=True)\n"
-                "  ds_optimized = your_dataset.chunk(chunks)\n"
-                "\n"
-                "Or use the standalone function:\n"
-                "\n"
-                "  chunks = recommend_chunks(ds, workload_type='cpu')  # or 'io', 'mixed'\n"
-                "\n"
-                f"Based on your current cluster configuration:\n"
-                f"• Workload type: {config.workload_type}\n"
-                f"• Target chunk size: 256-512 MiB per chunk\n"
-                f"• Safety factor: 60% of worker memory ({memory_spec.mem_per_worker_bytes / (1024**3) * 0.6:.1f} GiB max per chunk)\n"
-                f"• {topology.n_workers} workers available for parallelization\n"
+    if ds is not None:
+        try:
+            from .xarray import recommend_chunks, validate_chunks
+
+            # First, warn about any problematic existing chunking
+            validate_chunks(ds, client=client)
+
+            # Compute chunk recommendations for this specific dataset + cluster
+            raw = recommend_chunks(
+                ds,
+                client=client,
+                workload_type=config.workload_type,
+                verbose=config.suggest_chunks,
             )
-            print("=" * 60)
+            # recommend_chunks returns ChunkRecommendation when verbose=True, dict otherwise
+            chunk_recommendations = raw.chunks if hasattr(raw, "chunks") else raw
+            logger.info("Chunk recommendations computed", chunks=str(chunk_recommendations))
 
         except ImportError:
-            print(
-                "\n Xarray integration requires xarray and numpy to be installed.\n"
-                "Install with: pip install xarray numpy"
+            logger.warning(
+                "ds= provided but xarray/numpy are not installed — "
+                "skipping chunk validation and recommendations"
             )
 
+    elif config.suggest_chunks:
+        # No dataset provided — print generic cluster-based guidance
+        logger.info("=" * 60)
+        logger.info("Xarray Chunking Recommendations")
+        logger.info("=" * 60)
+        logger.info(
+            "To get optimal chunking suggestions for your xarray datasets:\n"
+            "\n"
+            "  from dask_setup import recommend_chunks\n"
+            "  chunks = recommend_chunks(your_dataset, client, verbose=True)\n"
+            "  ds_optimized = your_dataset.chunk(chunks)\n"
+            "\n"
+            "Or pass your dataset to setup_dask_client for automatic recommendations:\n"
+            "\n"
+            "  client, cluster, tmp, chunks = setup_dask_client(ds=your_dataset)"
+        )
+        logger.info(
+            f"Based on your current cluster:\n"
+            f"  workload_type:      {config.workload_type}\n"
+            f"  target chunk size:  256-512 MiB\n"
+            f"  safety factor:      60% of worker memory"
+            f" ({memory_spec.mem_per_worker_bytes / (1024**3) * 0.6:.1f} GiB max per chunk)\n"
+            f"  workers available:  {topology.n_workers}"
+        )
+        logger.info("=" * 60)
+
+    # --- Return --------------------------------------------------------------
+    logger.info("Dask client ready")
+
+    if ds is not None:
+        return client, cluster, str(temp_dir), chunk_recommendations or {}
     return client, cluster, str(temp_dir)
