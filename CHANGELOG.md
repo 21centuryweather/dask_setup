@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-03-23
+
+### Added
+
+- **`benchmark_config(configs, ds, operation)` function (`benchmark.py`).** A/B-tests
+  multiple `DaskSetupConfig` objects against the same xarray operation. Each config gets
+  a fresh cluster, and results are collected as `BenchmarkResult` objects with wall time,
+  memory usage, spill volume, and tasks/second. Accepts 1–5 timed repeats and logs
+  per-repeat progress. Returns a list of `BenchmarkResult` entries in the order supplied.
+- **`scaling_analysis(ds, operation, worker_counts, …)` function (`benchmark.py`).**
+  Sweeps worker counts (default `[1, 2, 4, 8]`) using the same config and dataset,
+  computes speedup and parallel efficiency at each count, and returns a `ScalingResult`
+  containing per-count `BenchmarkResult` objects plus speedup/efficiency lists.
+  Optional `plot=True` renders a matplotlib figure with dual axes (wall time and speedup).
+- **`chunk_impact(ds, client, operation, chunk_sizes, …)` function (`benchmark.py`).**
+  Fixes a running cluster and sweeps a list of chunk-size dicts (or generates them
+  automatically with `_generate_auto_chunks`). Returns a `ChunkImpactResult` with
+  per-spec `BenchmarkResult` objects. Optional `plot=True` renders a wall-time curve.
+- **`BenchmarkResult` dataclass (`benchmark.py`).** Shared result carrier for all three
+  analysis functions. Fields: `name`, `wall_time_seconds`, `wall_time_std`,
+  `peak_memory_gib`, `spill_gib`, `n_tasks`, `n_workers`, `tasks_per_second`, `errors`,
+  `extra`. Has `summary_line()` for one-line console output and `to_dict()` for
+  JSON-serialisable output.
+- **`ScalingResult` dataclass (`benchmark.py`).** Returned by `scaling_analysis()`.
+  Provides `wall_times` property, `best()` method, `summary()` multi-line table, and
+  optional `plot()` method.
+- **`ChunkImpactResult` dataclass (`benchmark.py`).** Returned by `chunk_impact()`.
+  Provides `optimal()` method, `summary()` table, and optional `plot()` method.
+- **`run_synthetic_benchmark(profile, operation, ds_size, repeats)` function
+  (`benchmark.py`).** Runs a benchmark against a named profile using only `dask.array`
+  — no xarray dataset required. Supports four dataset sizes (`tiny`, `small`, `medium`,
+  `large`). Returns a `SyntheticBenchmarkResult` with a human-readable `summary()`.
+- **`dask-setup benchmark` CLI subcommand (`cli.py`).** Runs `run_synthetic_benchmark`
+  from the command line. Flags: `--profile` (default `development`), `--operation`
+  (default `mean`), `--size` (default `small`), `--repeats` (default `1`). Prints the
+  `SyntheticBenchmarkResult.summary()` to stdout.
+- **`BenchmarkResult`, `ScalingResult`, `ChunkImpactResult`, `benchmark_config`,
+  `scaling_analysis`, `chunk_impact`, and `run_synthetic_benchmark` exported** from the
+  top-level package (`__init__.py`). Import guarded so the package degrades gracefully
+  when `dask.distributed` is unavailable.
+
 ## [1.7.0] - 2026-03-23
 
 ### Added

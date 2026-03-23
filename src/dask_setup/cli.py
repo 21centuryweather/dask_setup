@@ -356,6 +356,30 @@ def cmd_show_schema(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benchmark(args: argparse.Namespace) -> int:
+    """Run a synthetic benchmark against a named profile."""
+    try:
+        from .benchmark import run_synthetic_benchmark
+    except ImportError as e:
+        print(f" benchmark requires dask[distributed]: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        result = run_synthetic_benchmark(
+            profile_name=args.profile,
+            operation=args.operation,
+            ds_size=args.size,
+            repeats=args.repeats,
+            verbose=True,
+        )
+    except Exception as e:
+        print(f" Benchmark failed: {e}", file=sys.stderr)
+        return 1
+
+    print(result.summary())
+    return 0
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -430,6 +454,36 @@ def create_parser() -> argparse.ArgumentParser:
         help="Write schema to file instead of stdout",
     )
     schema_parser.set_defaults(func=cmd_show_schema)
+
+    # Synthetic benchmark
+    benchmark_parser = subparsers.add_parser(
+        "benchmark",
+        help="Run a synthetic performance benchmark against a profile",
+    )
+    benchmark_parser.add_argument(
+        "--profile", "-p",
+        default="development",
+        help="Profile name to benchmark against (default: development)",
+    )
+    benchmark_parser.add_argument(
+        "--operation", "-o",
+        default="mean",
+        choices=["mean", "sum", "std", "max", "min"],
+        help="Array operation to time (default: mean)",
+    )
+    benchmark_parser.add_argument(
+        "--size", "-s",
+        default="small",
+        choices=["tiny", "small", "medium", "large"],
+        help="Synthetic dataset size (default: small)",
+    )
+    benchmark_parser.add_argument(
+        "--repeats", "-r",
+        type=int,
+        default=1,
+        help="Number of timed repetitions (default: 1)",
+    )
+    benchmark_parser.set_defaults(func=cmd_benchmark)
 
     return parser
 

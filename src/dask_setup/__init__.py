@@ -19,6 +19,74 @@ from .tune import MemoryTuneResult, tune_memory_thresholds
 from .callbacks import register_worker_callbacks
 from .schema import PROFILE_SCHEMA
 
+# Performance benchmarking (v1.8) — optional but always available in practice
+try:
+    from .benchmark import (
+        BenchmarkResult,
+        ChunkImpactResult,
+        ScalingResult,
+        benchmark_config,
+        chunk_impact,
+        run_synthetic_benchmark,
+        scaling_analysis,
+    )
+
+    _benchmark_available = True
+except ImportError:
+    _benchmark_available = False
+
+    def benchmark_config(*args, **kwargs):  # type: ignore[misc]
+        raise ImportError(
+            "benchmark_config requires dask.distributed. "
+            "Install with: pip install dask[distributed]"
+        )
+
+    def scaling_analysis(*args, **kwargs):  # type: ignore[misc]
+        raise ImportError(
+            "scaling_analysis requires dask.distributed. "
+            "Install with: pip install dask[distributed]"
+        )
+
+    def chunk_impact(*args, **kwargs):  # type: ignore[misc]
+        raise ImportError(
+            "chunk_impact requires dask.distributed. "
+            "Install with: pip install dask[distributed]"
+        )
+
+    def run_synthetic_benchmark(*args, **kwargs):  # type: ignore[misc]
+        raise ImportError(
+            "run_synthetic_benchmark requires dask.distributed. "
+            "Install with: pip install dask[distributed]"
+        )
+
+    class BenchmarkResult:  # type: ignore[no-redef]
+        """Placeholder — requires dask.distributed."""
+
+        def __new__(cls, *args, **kwargs):
+            raise ImportError(
+                "BenchmarkResult requires dask.distributed. "
+                "Install with: pip install dask[distributed]"
+            )
+
+    class ScalingResult:  # type: ignore[no-redef]
+        """Placeholder — requires dask.distributed."""
+
+        def __new__(cls, *args, **kwargs):
+            raise ImportError(
+                "ScalingResult requires dask.distributed. "
+                "Install with: pip install dask[distributed]"
+            )
+
+    class ChunkImpactResult:  # type: ignore[no-redef]
+        """Placeholder — requires dask.distributed."""
+
+        def __new__(cls, *args, **kwargs):
+            raise ImportError(
+                "ChunkImpactResult requires dask.distributed. "
+                "Install with: pip install dask[distributed]"
+            )
+
+
 # Xarray integration (optional — requires xarray + numpy)
 try:
     from .xarray import ChunkRecommendation, recommend_chunks, validate_chunks
@@ -205,7 +273,7 @@ except ImportError:
         )
 
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 __all__ = [
     # Core API — always available
@@ -247,6 +315,14 @@ __all__ = [
     # Configuration ecosystem (v1.7)
     "PROFILE_FORMAT_VERSION",
     "PROFILE_SCHEMA",
+    # Performance benchmarking (v1.8)
+    "BenchmarkResult",
+    "ScalingResult",
+    "ChunkImpactResult",
+    "benchmark_config",
+    "scaling_analysis",
+    "chunk_impact",
+    "run_synthetic_benchmark",
     # Enhanced error types
     "ErrorContext",
     "EnhancedDaskSetupError",
