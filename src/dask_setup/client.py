@@ -22,6 +22,8 @@ from .topology import decide_topology, validate_topology
 if TYPE_CHECKING:
     import xarray as xr
 
+from .workload import infer_workload_type
+
 logger = get_logger("client")
 
 
@@ -61,6 +63,7 @@ def _resolve_configuration(
     min_workers: int | None = None,
     suggest_chunks: bool = False,
     fallback_on_detection_failure: bool = False,
+    adaptive_memory: bool = False,
 ) -> DaskSetupConfig:
     """Resolve final configuration from a config object, profile, and explicit parameters.
 
@@ -149,6 +152,8 @@ def _resolve_configuration(
         explicit_params["suggest_chunks"] = suggest_chunks
     if fallback_on_detection_failure:
         explicit_params["fallback_on_detection_failure"] = fallback_on_detection_failure
+    if adaptive_memory:
+        explicit_params["adaptive_memory"] = adaptive_memory
 
     explicit_config = DaskSetupConfig(**explicit_params) if explicit_params else None
 
@@ -270,6 +275,7 @@ def setup_dask_client(
     config: DaskSetupConfig | None = ...,
     ds: None = ...,
     fallback_on_detection_failure: bool = ...,
+    adaptive_memory: bool = ...,
 ) -> tuple[Client, LocalCluster, str]: ...
 
 
@@ -287,6 +293,7 @@ def setup_dask_client(
     config: DaskSetupConfig | None = ...,
     ds: xr.Dataset | xr.DataArray = ...,
     fallback_on_detection_failure: bool = ...,
+    adaptive_memory: bool = ...,
 ) -> tuple[Client, LocalCluster, str, dict[str, int]]: ...
 
 
@@ -303,6 +310,7 @@ def setup_dask_client(
     config: DaskSetupConfig | None = None,
     ds: Any = None,  # xr.Dataset | xr.DataArray | None
     fallback_on_detection_failure: bool = False,
+    adaptive_memory: bool = False,
 ) -> tuple[Client, LocalCluster, str] | tuple[Client, LocalCluster, str, dict[str, int]]:
     """Create a single-node Dask LocalCluster tuned for HPC login/compute nodes.
 
@@ -356,6 +364,12 @@ def setup_dask_client(
         all resource detection methods fail, instead of raising
         :exc:`ResourceDetectionError`.  A warning is logged.
         Default ``False`` preserves the existing behaviour of raising on failure.
+    adaptive_memory : bool
+        If ``True``, call :func:`~dask_setup.tune.tune_memory_thresholds` once
+        after the cluster is ready.  This reads the (initially zero) spill stats
+        and tightens the worker ``memory.target`` / ``memory.spill`` thresholds
+        slightly, giving workers more head-room from the start.  Default
+        ``False``.
 
     Returns
     -------
@@ -400,6 +414,18 @@ def setup_dask_client(
     env_type = get_environment_type()
     logger.info("Starting Dask client setup", workload_type=workload_type, environment=env_type)
 
+    # --- Profile auto-selection -----------------------------------------
+    # Must happen before _resolve_configuration so the selected profile name
+    # can be passed in. Requires a preliminary resource detection pass.
+    if profile == "auto":
+        try:
+            _pre_resources = detect_resources(fallback=fallback_on_detection_failure)
+        except Exception:
+            _pre_resources = None
+        from .config_manager import ConfigManager as _CM
+        profile = _CM().auto_select_profile(_pre_resources)
+        logger.info("Auto-selected profile", profile=profile)
+
     # Load and merge configuration
     config = _resolve_configuration(
         config=config,
@@ -413,6 +439,7 @@ def setup_dask_client(
         min_workers=min_workers,
         suggest_chunks=suggest_chunks,
         fallback_on_detection_failure=fallback_on_detection_failure,
+        adaptive_memory=adaptive_memory,
     )
     logger.debug(
         "Configuration resolved",
@@ -437,6 +464,18 @@ def setup_dask_client(
         )
     if is_jupyter():
         logger.debug("Jupyter environment detected — dashboard link will be rendered as HTML")
+
+    # --- Workload type auto-inference -----------------------------------
+    # Resolve "auto" to a concrete type now that we have resources + ds.
+    # We patch config with the inferred type rather than creating a whole
+    # new DaskSetupConfig to avoid a second validation pass.
+    if config.workload_type == "auto":
+        inferred_wt = infer_workload_type(ds)
+        config.workload_type = inferred_wt
+        logger.info(
+            "workload_type='auto' resolved via dataset inspection",
+            workload_type=inferred_wt,
+        )
 
     # Create temporary directory for spill files (use config for base dir if specified)
     temp_dir = create_dask_temp_dir(base_dir=config.temp_base_dir)
@@ -519,6 +558,16 @@ def setup_dask_client(
 
     # Connect client
     client = Client(cluster)
+
+    # --- Adaptive memory threshold tuning (opt-in) ----------------------
+    if config.adaptive_memory:
+        try:
+            from .tune import tune_memory_thresholds
+
+            tune_result = tune_memory_thresholds(client, strategy="tighten")
+            logger.info("Adaptive memory tuning: " + tune_result.summary())
+        except Exception as e:
+            logger.warning("adaptive_memory tuning failed; continuing with defaults", error=str(e))
 
     # Print dashboard info if enabled
     if config.dashboard:

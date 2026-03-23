@@ -10,10 +10,14 @@ A drop-in convenience wrapper around dask.distributed.LocalCluster + Client that
 
 from .client import DaskClientContext, setup_dask_client
 from .config import DaskSetupConfig
-from .config_manager import ConfigManager
+from .config_manager import PROFILE_FORMAT_VERSION, ConfigManager
 from .environment import get_environment_type, is_jupyter
 from .logging import configure_logging, get_logger
 from .reporting import ClusterReport, cluster_report
+from .workload import infer_workload_type
+from .tune import MemoryTuneResult, tune_memory_thresholds
+from .callbacks import register_worker_callbacks
+from .schema import PROFILE_SCHEMA
 
 # Xarray integration (optional — requires xarray + numpy)
 try:
@@ -64,8 +68,10 @@ except ImportError:
 try:
     from .io_patterns import (
         IORecommendation,
+        KerchunkOptimizer,
         NetCDFOptimizer,
         ZarrOptimizer,
+        ZarrV3Optimizer,
         detect_storage_format,
         recommend_io_chunks,
     )
@@ -104,8 +110,38 @@ except ImportError:
     class ZarrOptimizer(_MissingIOClass):  # type: ignore[no-redef]
         pass
 
+    class ZarrV3Optimizer(_MissingIOClass):  # type: ignore[no-redef]
+        pass
+
     class NetCDFOptimizer(_MissingIOClass):  # type: ignore[no-redef]
         pass
+
+    class KerchunkOptimizer(_MissingIOClass):  # type: ignore[no-redef]
+        pass
+
+
+# Parquet / Arrow recommendations for Dask DataFrame workloads (optional)
+try:
+    from .parquet import ParquetRecommendation, recommend_parquet_chunks
+
+    _parquet_available = True
+except ImportError:
+    _parquet_available = False
+
+    def recommend_parquet_chunks(*args, **kwargs):  # type: ignore[misc]
+        raise ImportError(
+            "recommend_parquet_chunks requires pyarrow or fastparquet. "
+            "Install with: pip install pyarrow"
+        )
+
+    class ParquetRecommendation:  # type: ignore[no-redef]
+        """Placeholder — requires pyarrow or fastparquet."""
+
+        def __new__(cls, *args, **kwargs):
+            raise ImportError(
+                "ParquetRecommendation requires pyarrow or fastparquet. "
+                "Install with: pip install pyarrow"
+            )
 
 
 # Enhanced error handling (optional, but strongly recommended — always available in practice)
@@ -169,7 +205,7 @@ except ImportError:
         )
 
 
-__version__ = "1.4.0"
+__version__ = "1.7.0"
 
 __all__ = [
     # Core API — always available
@@ -186,6 +222,11 @@ __all__ = [
     # Post-run reporting
     "ClusterReport",
     "cluster_report",
+    # v1.5 — Adaptive & dynamic configuration
+    "infer_workload_type",
+    "MemoryTuneResult",
+    "tune_memory_thresholds",
+    "register_worker_callbacks",
     # Xarray helpers — require xarray + numpy
     "recommend_chunks",
     "validate_chunks",
@@ -197,7 +238,15 @@ __all__ = [
     "detect_storage_format",
     "IORecommendation",
     "ZarrOptimizer",
+    "ZarrV3Optimizer",
     "NetCDFOptimizer",
+    "KerchunkOptimizer",
+    # Parquet / Arrow helpers (v1.6)
+    "recommend_parquet_chunks",
+    "ParquetRecommendation",
+    # Configuration ecosystem (v1.7)
+    "PROFILE_FORMAT_VERSION",
+    "PROFILE_SCHEMA",
     # Enhanced error types
     "ErrorContext",
     "EnhancedDaskSetupError",

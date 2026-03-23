@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dask_setup"
-version = "1.4.0"
+version = "1.7.0"
 description = "HPC-tuned Dask helpers for single-node runs on NCI Gadi."
 authors = [{name="Sam Green"}]
 readme = "README.md"
@@ -33,7 +33,7 @@ dev = [
 ]
 
 [tool.setuptools.package-data]
-dask_setup = ["py.typed"]
+dask_setup = ["py.typed", "schema/profile_schema.json"]
 
 [tool.ruff]
 line-length = 100

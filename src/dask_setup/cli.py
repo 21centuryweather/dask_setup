@@ -48,6 +48,12 @@ def format_profile_details(profile: Any) -> str:
         f"Description: {profile.description}",
     ]
 
+    if getattr(profile, "based_on", None):
+        lines.append(f"Based on: {profile.based_on}")
+
+    if getattr(profile, "profile_version", None):
+        lines.append(f"Format version: {profile.profile_version}")
+
     if profile.tags:
         lines.append(f"Tags: {', '.join(profile.tags)}")
 
@@ -274,6 +280,82 @@ def cmd_export_profile(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_import_profile(args: argparse.Namespace) -> int:
+    """Import a profile from a URL or local file path.
+
+    Supports any HTTP/HTTPS URL that returns a raw YAML profile.  For
+    local files, pass the path directly (e.g. ``/tmp/my_profile.yaml``).
+    """
+    manager = ConfigManager()
+
+    url_or_path = args.url
+
+    try:
+        # Detect whether this is a URL or a local file
+        if url_or_path.startswith(("http://", "https://")):
+            profile = manager.import_profile_from_url(
+                url_or_path,
+                name_override=args.name,
+                force=args.force,
+            )
+        else:
+            # Local file path
+            from pathlib import Path
+
+            file_path = Path(url_or_path)
+            if not file_path.exists():
+                print(f" File not found: {url_or_path}", file=sys.stderr)
+                return 1
+
+            profile = manager.load_profile_from_file(file_path)
+            if args.name:
+                profile.name = args.name
+                profile.config.name = args.name
+
+            # Conflict check
+            existing = manager.get_profile(profile.name)
+            if existing is not None and not existing.builtin and not args.force:
+                print(
+                    f" A profile named '{profile.name}' already exists. "
+                    "Use --force to overwrite.",
+                    file=sys.stderr,
+                )
+                return 1
+
+            manager.save_profile(profile)
+
+        print(f" Profile '{profile.name}' imported successfully!")
+        print("\n" + format_profile_details(profile))
+        return 0
+
+    except Exception as e:
+        print(f" Failed to import profile: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_show_schema(args: argparse.Namespace) -> int:
+    """Print the JSON Schema for profile YAML files."""
+    import json
+
+    from .config_manager import ConfigManager as _CM
+
+    schema = _CM.get_profile_schema()
+    output = json.dumps(schema, indent=2)
+
+    if args.output:
+        try:
+            with open(args.output, "w") as f:
+                f.write(output)
+            print(f" JSON Schema written to {args.output}")
+        except OSError as e:
+            print(f" Could not write schema: {e}", file=sys.stderr)
+            return 1
+    else:
+        print(output)
+
+    return 0
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -317,6 +399,37 @@ def create_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("name", help="Profile name")
     export_parser.add_argument("--output", "-o", help="Output file (default: stdout)")
     export_parser.set_defaults(func=cmd_export_profile)
+
+    # Import profile from URL or local file
+    import_parser = subparsers.add_parser(
+        "import",
+        help="Import a profile from a URL or local file",
+    )
+    import_parser.add_argument(
+        "url",
+        metavar="URL_OR_PATH",
+        help="HTTP/HTTPS URL or local file path of a YAML profile to import",
+    )
+    import_parser.add_argument(
+        "--name", "-n",
+        help="Override the profile name (default: use the name field from the YAML)",
+    )
+    import_parser.add_argument(
+        "--force", action="store_true",
+        help="Overwrite an existing profile of the same name",
+    )
+    import_parser.set_defaults(func=cmd_import_profile)
+
+    # Print JSON Schema
+    schema_parser = subparsers.add_parser(
+        "schema",
+        help="Print the JSON Schema for profile YAML files",
+    )
+    schema_parser.add_argument(
+        "--output", "-o",
+        help="Write schema to file instead of stdout",
+    )
+    schema_parser.set_defaults(func=cmd_show_schema)
 
     return parser
 

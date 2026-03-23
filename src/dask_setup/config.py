@@ -57,6 +57,9 @@ class DaskSetupConfig:
     # Resilience options
     fallback_on_detection_failure: bool = False
 
+    # Adaptive behaviour options
+    adaptive_memory: bool = False
+
     # Profile metadata
     name: str = ""
     description: str = ""
@@ -66,7 +69,7 @@ class DaskSetupConfig:
     _skip_validation: bool = field(default=False, init=False)
 
     # Validation constraints
-    VALID_WORKLOAD_TYPES: ClassVar[set[str]] = {"cpu", "io", "mixed"}
+    VALID_WORKLOAD_TYPES: ClassVar[set[str]] = {"cpu", "io", "mixed", "auto"}
     MIN_RESERVE_MEM: ClassVar[float] = 1.0
     MAX_RESERVE_MEM: ClassVar[float] = 1000.0
     VALID_COMPRESSION_ALGORITHMS: ClassVar[set[str]] = {
@@ -80,8 +83,16 @@ class DaskSetupConfig:
         "bz2",
         "lzma",
         "false",
+        # blosc2 codec variants (zarr ≥ 3.0 / blosc2 package)
+        "blosc2",
+        "blosc2:lz4",
+        "blosc2:lz4hc",
+        "blosc2:blosclz",
+        "blosc2:zstd",
+        "blosc2:zlib",
+        "blosc2:snappy",
     }
-    VALID_IO_FORMATS: ClassVar[set[str]] = {"zarr", "netcdf"}
+    VALID_IO_FORMATS: ClassVar[set[str]] = {"zarr", "netcdf", "zarr_v3", "kerchunk", "parquet"}
     VALID_IO_ACCESS_PATTERNS: ClassVar[set[str]] = {
         "sequential",
         "random",
@@ -243,6 +254,8 @@ class DaskSetupConfig:
             "io_compression_level": self.io_compression_level,
             # Resilience options
             "fallback_on_detection_failure": self.fallback_on_detection_failure,
+            # Adaptive behaviour options
+            "adaptive_memory": self.adaptive_memory,
             # Metadata
             "name": self.name,
             "description": self.description,
@@ -354,6 +367,27 @@ class ConfigProfile:
 
     Profiles allow users to save and reuse common configurations for
     different types of workloads or environments.
+
+    Profile inheritance
+    -------------------
+    A profile may specify ``based_on: "<parent_name>"`` to inherit all settings
+    from another profile and override only the fields it specifies explicitly::
+
+        name: fat_nodes
+        based_on: climate_analysis
+        description: "climate_analysis but for fat nodes"
+        config:
+          reserve_mem_gb: 80.0
+
+    Inheritance is resolved by :class:`ConfigManager`; circular chains raise
+    :exc:`~dask_setup.exceptions.InvalidConfigurationError`.
+
+    Profile versioning
+    ------------------
+    The ``profile_version`` field records which version of ``dask_setup``
+    created the profile.  :class:`ConfigManager` emits a warning when loading
+    a profile whose ``profile_version`` is newer than
+    :data:`~dask_setup.config_manager.PROFILE_FORMAT_VERSION`.
     """
 
     name: str
@@ -361,6 +395,10 @@ class ConfigProfile:
     builtin: bool = False
     created_at: str | None = None
     modified_at: str | None = None
+    #: Name of the parent profile to inherit from (``None`` = no inheritance).
+    based_on: str | None = None
+    #: ``dask_setup`` version string at the time this profile was saved.
+    profile_version: str | None = None
 
     def __post_init__(self) -> None:
         """Set profile name in config if not already set."""
@@ -379,17 +417,28 @@ class ConfigProfile:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert profile to dictionary for serialization."""
-        return {
+        d: dict[str, Any] = {
             "name": self.name,
             "config": self.config.to_dict(),
             "builtin": self.builtin,
             "created_at": self.created_at,
             "modified_at": self.modified_at,
         }
+        if self.based_on is not None:
+            d["based_on"] = self.based_on
+        if self.profile_version is not None:
+            d["version"] = self.profile_version
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ConfigProfile:
         """Create profile from dictionary.
+
+        Note
+        ----
+        This method does **not** resolve ``based_on`` inheritance — that
+        requires access to other profiles and is handled by
+        :meth:`ConfigManager.load_profile_from_file`.
 
         Args:
             data: Dictionary with profile data
@@ -406,4 +455,6 @@ class ConfigProfile:
             builtin=data.get("builtin", False),
             created_at=data.get("created_at"),
             modified_at=data.get("modified_at"),
+            based_on=data.get("based_on"),
+            profile_version=data.get("version"),
         )

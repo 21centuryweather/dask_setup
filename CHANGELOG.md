@@ -7,6 +7,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-03-23
+
+### Added
+
+- **Profile inheritance (`based_on:` key).** YAML profiles now accept a
+  `based_on: <parent_name>` field. Only the fields listed under `config:` in
+  the child profile override the parent's values; everything else is inherited.
+  Works with builtin, site-wide, and user profiles. Circular chains and chains
+  exceeding 16 levels are detected and rejected with a descriptive error.
+  `ConfigProfile` gains `based_on: str | None` and `profile_version: str | None`
+  fields.
+- **Site-wide profiles.** `ConfigManager` now loads profiles from
+  `/etc/dask_setup/profiles/` (or the directory pointed to by
+  `$DASK_SETUP_PROFILE_DIR`) between builtins and user profiles. Site admins
+  can ship system-optimised defaults that users can override locally.
+  `ConfigManager.__init__` accepts a new `site_profiles_dir` parameter.
+- **Profile versioning.** Every profile saved by `save_profile()` now carries a
+  `version: "1.7"` field (the current `PROFILE_FORMAT_VERSION` constant).
+  `load_profile_from_file()` emits a `UserWarning` when loading a profile whose
+  version string is newer than the installed package understands.
+  `PROFILE_FORMAT_VERSION` is exported from the top-level package.
+- **Profile import via URL / local file (`dask-setup import`).** New CLI
+  subcommand: `dask-setup import <URL_OR_PATH> [--name <name>] [--force]`.
+  Supports HTTP/HTTPS URLs and local file paths. Uses only stdlib
+  `urllib.request` — no extra dependencies. `ConfigManager` exposes the
+  corresponding `import_profile_from_url(url, name_override, force)` method.
+- **JSON Schema for profiles (`dask-setup schema`).** A JSON Schema (draft-07)
+  describing the profile YAML format is now shipped in
+  `dask_setup/schema/profile_schema.json`. `ConfigManager.get_profile_schema()`
+  returns it as a Python dict. `dask-setup schema [--output file]` prints it
+  to stdout or writes it to a file for use with editors. `PROFILE_SCHEMA` is
+  exported from the top-level package.
+
+### Changed
+
+- `ConfigManager.list_profiles()` now merges profiles in three layers —
+  builtins < site-wide < user — so user profiles always win on name conflicts.
+- `ConfigManager.get_profile()` searches user → site-wide → builtin (same
+  precedence order as `list_profiles`).
+- `format_profile_details()` in the CLI now shows `Based on:` and
+  `Format version:` lines when present.
+
+## [1.6.0] - 2026-03-23
+
+### Added
+
+- **`ZarrV3Optimizer` class (`io_patterns.py`).** Handles the zarr-python ≥ 3.0
+  API, including sharding via `zarr.codecs.ShardingCodec` and the updated codec
+  pipeline. Detects v3 stores via `zarr.json` metadata or the `zarr_format=3`
+  store attribute. When the outer chunk exceeds 64 MiB, a sharding config
+  (outer/inner shapes, index codec) is returned in `IORecommendation.extra["sharding"]`.
+  Preferred over `ZarrOptimizer` when zarr-python ≥ 3.0 is detected.
+- **`KerchunkOptimizer` class (`io_patterns.py`).** Detects datasets opened via
+  Kerchunk or VirtualiZarr reference stores (fsspec `ReferenceFileSystem`,
+  `ManifestArray`, `.json` reference files). Returns the existing chunk layout
+  unchanged — rechunking would require a full data copy — and adds an
+  informational warning about fixed byte-range boundaries.
+- **`detect_storage_format()` extended.** Now returns `"zarr_v3"` for Zarr v3
+  stores and `"kerchunk"` for Kerchunk/VirtualiZarr reference datasets. Ordering
+  ensures kerchunk is checked before zarr (kerchunk presents a zarr-like
+  interface), and `ZarrV3Optimizer` is preferred over `ZarrOptimizer` when v3 is
+  detected.
+- **`recommend_io_chunks()` dispatches to new optimizers.** Routes `"zarr_v3"`
+  to `ZarrV3Optimizer` and `"kerchunk"` to `KerchunkOptimizer`. Populates
+  `IORecommendation.extra["sharding"]` for Zarr v3 stores when sharding is
+  appropriate. Adds a Kerchunk-specific warning when that format is detected.
+- **`IORecommendation.extra` field.** New `dict[str, Any]` field on
+  `IORecommendation` for format-specific extras. Currently populated by
+  `ZarrV3Optimizer` with sharding configuration when applicable.
+- **`recommend_parquet_chunks(df, client, …)` helper (`parquet.py`).** Parquet /
+  Arrow partition-size recommendations for Dask DataFrame workloads — analogous
+  to `recommend_io_chunks()` for xarray datasets. Estimates bytes-per-row from
+  `memory_usage()` or dtype sizes, respects per-worker memory limits when a
+  `client` is provided, auto-selects compression (`snappy` local, `zstd` cloud),
+  and warns on wide tables. Returns `rows_per_partition` by default or a full
+  `ParquetRecommendation` when `verbose=True`.
+- **`ParquetRecommendation` dataclass (`parquet.py`).** Returned by
+  `recommend_parquet_chunks()` when `verbose=True`. Fields: `rows_per_partition`,
+  `compression`, `storage_options`, `estimated_partition_mb`, `warnings`, `extra`
+  (includes `row_group_size` and `write_metadata_file` hints). Has `.summary()`.
+- **blosc2 codec variants in `VALID_COMPRESSION_ALGORITHMS`.** Added `"blosc2"`,
+  `"blosc2:lz4"`, `"blosc2:lz4hc"`, `"blosc2:blosclz"`, `"blosc2:zstd"`,
+  `"blosc2:zlib"`, and `"blosc2:snappy"` — first-class codecs in Zarr v3 /
+  blosc2 package. `ZarrV3Optimizer` automatically uses `blosc2:zstd` or
+  `blosc2:lz4` when `blosc2` is importable.
+- **`VALID_IO_FORMATS` extended.** Now includes `"zarr_v3"`, `"kerchunk"`, and
+  `"parquet"` alongside the existing `"zarr"` and `"netcdf"` entries.
+
+### Changed
+
+- `ZarrV3Optimizer`, `KerchunkOptimizer`, `ParquetRecommendation`, and
+  `recommend_parquet_chunks` are now exported from the top-level package.
+
+## [1.5.0] - 2026-03-23
+
+### Added
+
+- **`workload_type="auto"` in `setup_dask_client()`.** New sentinel value for
+  `workload_type`. When passed, `setup_dask_client()` calls
+  `infer_workload_type(ds)` to choose between `"cpu"`, `"io"`, or `"mixed"`
+  automatically. Falls back to `"mixed"` if no dataset is provided.
+  Accepted by `DaskSetupConfig` so it can be stored in profiles.
+- **`infer_workload_type(ds)` helper (`workload.py`).** Inspects an xarray
+  Dataset or DataArray's dimension names (time, lat, lon, lev …), variable
+  dtypes (float-dominant → CPU; int/bool-dominant → I/O), and
+  bytes-per-variable ratio. Returns `"cpu"`, `"io"`, or `"mixed"`. Defaults
+  to `"mixed"` when evidence is ambiguous (score margin ≤ 2) or `ds=None`.
+  Exported from the top-level package.
+- **`tune_memory_thresholds(client, strategy="auto", …)` (`tune.py`).** One-shot
+  dynamic memory threshold adjustment. Reads current spill volume from the
+  scheduler; tightens worker `memory.target`/`memory.spill` when spill is low
+  (extra head-room), loosens them when spill is heavy (less disk write
+  amplification). Strategy can be forced with `"tighten"`, `"loosen"`, or
+  disabled with `"off"`. Returns `MemoryTuneResult` with `.summary()` and
+  per-field detail. Exported from the top-level package.
+- **`MemoryTuneResult` dataclass (`tune.py`).** Returned by
+  `tune_memory_thresholds()`. Fields: `strategy`, `old_target`, `new_target`,
+  `old_spill`, `new_spill`, `spill_gib_observed`, `rationale`,
+  `workers_updated`. Exported from the top-level package.
+- **`DaskSetupConfig(adaptive_memory=True)` opt-in.** When set, calls
+  `tune_memory_thresholds(client, strategy="tighten")` immediately after the
+  cluster is created so workers start with tighter thresholds from the first
+  task. Also accepted as a keyword argument to `setup_dask_client()`.
+- **`register_worker_callbacks(client, on_worker_death=…, on_worker_added=…)`
+  (`callbacks.py`).** Installs a `SchedulerPlugin` that fires user callables
+  when workers join or leave the cluster. Worker address is passed as the sole
+  argument. Exceptions inside callbacks are caught and logged so a buggy
+  callback cannot crash the scheduler. Exported from the top-level package.
+- **`profile="auto"` in `setup_dask_client()`.** Inspects resources and
+  environment then delegates to `ConfigManager.auto_select_profile()`.
+  Selection rules (first match): Jupyter → `"interactive"`; small machine
+  (≤ 8 cores or ≤ 16 GiB) → `"development"`; PBS + JOBFS + ≥ 16 cores →
+  `"zarr_io_heavy"`; large HPC (≥ 48 cores or ≥ 128 GiB) →
+  `"climate_analysis"`; general HPC → `"production"`; fallback →
+  `"development"`.
+- **`ConfigManager.auto_select_profile(resources)`.** New public method
+  implementing the profile auto-selection logic above.
+
 ## [1.4.0] - 2026-03-23
 
 ### Added

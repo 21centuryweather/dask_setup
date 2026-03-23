@@ -33,6 +33,13 @@ def decide_topology(
         InvalidConfigurationError: If workload_type is invalid or parameters are inconsistent
     """
     # Validate workload type
+    # "auto" should be resolved to a concrete type before calling decide_topology
+    if workload_type == "auto":
+        raise InvalidConfigurationError(
+            "workload_type='auto' must be resolved to 'cpu', 'io', or 'mixed' before "
+            "decide_topology() is called. Pass a dataset via ds= to setup_dask_client(), "
+            "or call infer_workload_type(ds) yourself and pass the result explicitly."
+        )
     if workload_type not in {"cpu", "io", "mixed"}:
         raise InvalidConfigurationError(
             f"workload_type must be 'cpu', 'io', or 'mixed', got '{workload_type}'"

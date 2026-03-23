@@ -15,7 +15,7 @@ Key features:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -45,7 +45,9 @@ except ImportError:
 __all__ = [
     "IOOptimizer",
     "ZarrOptimizer",
+    "ZarrV3Optimizer",
     "NetCDFOptimizer",
+    "KerchunkOptimizer",
     "detect_storage_format",
     "recommend_io_chunks",
     "IORecommendation",
@@ -67,11 +69,13 @@ class IORecommendation:
     access_pattern: str
     estimated_throughput_mb_s: float
     warnings: list[str]
+    extra: dict[str, Any] = field(default_factory=dict)
+    """Format-specific extras (e.g. ``sharding`` config for Zarr v3)."""
 
     def __repr__(self) -> str:
         return (
             f"IORecommendation(format='{self.format}', chunks={self.chunks}, "
-            f"compression={self.compression['codec']}, "
+            f"compression={self.compression.get('codec', 'none')}, "
             f"throughput~{self.estimated_throughput_mb_s:.1f}MB/s)"
         )
 
@@ -361,6 +365,200 @@ class ZarrOptimizer(IOOptimizer):
         return options
 
 
+class ZarrV3Optimizer(IOOptimizer):
+    """Optimizer for Zarr v3 format storage (zarr-python ≥ 3.0).
+
+    Handles the updated ``zarr.open()`` interface, sharding via
+    ``zarr.codecs.ShardingCodec``, and the new codec pipeline introduced
+    in ``zarr>=3.0``.  When sharding is appropriate (large arrays), the
+    recommended outer/inner chunk shapes are returned in
+    ``IORecommendation.extra["sharding"]``.
+    """
+
+    # Shard only when the outer chunk exceeds this size
+    _SHARD_THRESHOLD_MB: float = 64.0
+    # Target size for inner (sub-shard) chunks when sharding is enabled
+    _INNER_CHUNK_MB: float = 4.0
+
+    def detect_format(self, path_or_url: str, ds: xr.Dataset | xr.DataArray | None = None) -> bool:
+        """Detect Zarr v3 from path pattern or dataset store metadata."""
+        path_lower = path_or_url.lower()
+
+        # zarr.json is the v3 metadata file (replaces .zarray / .zgroup)
+        if "zarr.json" in path_lower:
+            return True
+
+        if ".zarr" in path_lower or path_lower.endswith((".zarr", ".zarr/")):
+            # Check dataset store for zarr_format == 3
+            if ds is not None:
+                for attr_path in [
+                    ("encoding", "zarr_store"),
+                    ("encoding", "store"),
+                    ("_file_obj", "_store"),
+                    ("_file_obj", "ds"),
+                ]:
+                    obj = ds
+                    try:
+                        for key in attr_path:
+                            obj = getattr(obj, key, None) or (
+                                obj.get(key) if hasattr(obj, "get") else None
+                            )
+                            if obj is None:
+                                break
+                        if obj is not None and getattr(obj, "zarr_format", 0) == 3:
+                            return True
+                    except Exception:
+                        pass
+
+            # If zarr is installed and is v3, prefer ZarrV3Optimizer
+            try:
+                import zarr
+
+                major = int(zarr.__version__.split(".")[0])
+                if major >= 3 and ds is not None and hasattr(ds, "encoding"):
+                    src = ds.encoding.get("source", "")
+                    if ".zarr" in src:
+                        return True
+            except Exception:
+                pass
+
+        return False
+
+    def _sharding_config(
+        self, dims: dict[str, int], inner_chunks: dict[str, int]
+    ) -> dict[str, Any]:
+        """Return a sharding config for zarr v3 ``StoreShard``."""
+        # Outer (shard) shape: 4× inner chunks, clamped to dim size
+        shard_shape = {
+            dim: min(dims[dim], inner_chunks.get(dim, dims[dim]) * 4) for dim in dims
+        }
+        return {
+            "shards": shard_shape,
+            "inner_chunks": inner_chunks,
+            "codec": "sharding",
+            "index_codec": "crc32",
+        }
+
+    def optimize_chunks(
+        self,
+        ds: xr.Dataset | xr.DataArray,
+        target_chunk_mb: tuple[float, float] = (128, 512),
+        access_pattern: str = "auto",
+    ) -> dict[str, int]:
+        """Optimize outer chunk sizes for Zarr v3 (with sharding awareness)."""
+        if xr is not None and isinstance(ds, xr.DataArray):
+            dims: dict[str, int] = dict(zip(ds.dims, ds.shape, strict=False))
+            dtype = ds.dtype
+        elif hasattr(ds, "sizes"):
+            dims = dict(ds.sizes)
+            if hasattr(ds, "data_vars") and ds.data_vars:
+                main_var = max(ds.data_vars.values(), key=lambda v: getattr(v, "size", 0))
+                dtype = main_var.dtype
+            else:
+                dtype = getattr(ds, "dtype", "float32")
+        else:
+            dims = getattr(ds, "sizes", {})
+            dtype = getattr(ds, "dtype", "float32")
+
+        if np is None or not dims:
+            return {}
+
+        dtype_size = np.dtype(dtype).itemsize
+        target_max_bytes = int(target_chunk_mb[1] * 1024 * 1024)
+        working_chunks = dict(dims)
+
+        def _estimate_bytes() -> int:
+            return dtype_size * int(np.prod(list(working_chunks.values())))
+
+        time_like = [d for d in dims if any(t in d.lower() for t in ["time", "date", "t"])]
+        spatial = [d for d in dims if d not in time_like]
+
+        while _estimate_bytes() > target_max_bytes:
+            candidates = [d for d in (spatial or list(dims.keys())) if working_chunks[d] > 1]
+            if not candidates:
+                candidates = [d for d in dims if working_chunks[d] > 1]
+            if not candidates:
+                break
+            largest = max(candidates, key=lambda d: working_chunks[d])
+            working_chunks[largest] = max(1, working_chunks[largest] // 2)
+
+        return {dim: sz for dim, sz in working_chunks.items() if sz < dims[dim]}
+
+    def optimize_compression(
+        self, ds: xr.Dataset | xr.DataArray, storage_location: str = "local"
+    ) -> dict[str, Any]:
+        """Recommend a zarr v3 codec-pipeline compression configuration."""
+        if xr is not None and isinstance(ds, xr.DataArray):
+            dtype = ds.dtype
+        elif hasattr(ds, "data_vars") and ds.data_vars:
+            main_var = max(ds.data_vars.values(), key=lambda v: getattr(v, "size", 0))
+            dtype = main_var.dtype
+        else:
+            dtype = getattr(ds, "dtype", "float32")
+
+        if np is None:
+            return {"codec": "zstd", "level": 3}
+
+        is_cloud = "cloud" in storage_location.lower() or any(
+            x in storage_location for x in ["s3://", "gs://", "azure://"]
+        )
+
+        # Default: zstd for cloud (better ratio), blosc for local (better speed)
+        if is_cloud:
+            result: dict[str, Any] = {"codec": "zstd", "level": 3}
+        elif np.issubdtype(dtype, np.floating):
+            result = {"codec": "blosc", "level": 5}
+        else:
+            result = {"codec": "blosc", "level": 3}
+
+        # Prefer blosc2 when available (zarr v3 first-class support)
+        try:
+            import blosc2  # noqa: F401
+
+            if not is_cloud:
+                result["codec"] = "blosc2"
+                result["blosc2_cname"] = "zstd" if np.issubdtype(dtype, np.floating) else "lz4"
+        except ImportError:
+            pass
+
+        return result
+
+    def optimize_storage_options(
+        self, path_or_url: str, access_pattern: str = "auto"
+    ) -> dict[str, Any]:
+        """Optimize storage options for Zarr v3."""
+        options: dict[str, Any] = {
+            "zarr_format": 3,
+            # zarr v3 uses zarr.json for metadata, not .zmetadata
+            "consolidated": False,
+        }
+
+        if path_or_url.startswith("s3://"):
+            options.update(
+                {
+                    "anon": False,
+                    "default_cache_type": "readahead",
+                    "default_block_size": 64 * 1024 * 1024,
+                }
+            )
+        elif path_or_url.startswith("gs://"):
+            options.update(
+                {
+                    "default_cache_type": "readahead",
+                    "default_block_size": 64 * 1024 * 1024,
+                }
+            )
+        elif path_or_url.startswith(("http://", "https://")):
+            options.update(
+                {
+                    "default_cache_type": "readahead",
+                    "default_block_size": 32 * 1024 * 1024,
+                }
+            )
+
+        return options
+
+
 class NetCDFOptimizer(IOOptimizer):
     """Optimizer for NetCDF format storage."""
 
@@ -524,6 +722,123 @@ class NetCDFOptimizer(IOOptimizer):
         return options
 
 
+class KerchunkOptimizer(IOOptimizer):
+    """Optimizer for datasets opened via Kerchunk or VirtualiZarr reference stores.
+
+    When a dataset is backed by a Kerchunk / VirtualiZarr reference filesystem,
+    chunk boundaries are fixed by the byte ranges of the original files.
+    Rechunking would require a full data copy, defeating the purpose of the
+    virtual store.  This optimizer detects the reference-filesystem pattern,
+    returns the existing chunks unchanged, and adds an informational warning.
+    """
+
+    def detect_format(self, path_or_url: str, ds: xr.Dataset | xr.DataArray | None = None) -> bool:
+        """Detect Kerchunk/VirtualiZarr reference filesystem datasets."""
+        path_lower = path_or_url.lower()
+
+        # zarr.json is the zarr v3 metadata file — explicitly not a Kerchunk reference
+        if path_lower.endswith("zarr.json"):
+            return False
+
+        # .json extension is common for Kerchunk reference files
+        if path_lower.endswith(".json") or "kerchunk" in path_lower or "reference" in path_lower:
+            if ds is not None:
+                return self._has_reference_store(ds)
+            # Path pattern alone is sufficient evidence for a standalone .json reference
+            if path_lower.endswith(".json"):
+                return True
+
+        # Dataset-only detection (no path required)
+        if ds is not None and self._has_reference_store(ds):
+            return True
+
+        return False
+
+    @staticmethod
+    def _has_reference_store(ds: Any) -> bool:
+        """Return True if *ds* appears to be backed by a reference filesystem."""
+        # fsspec ReferenceFileSystem / Kerchunk store
+        file_obj = getattr(ds, "_file_obj", None)
+        if file_obj is not None:
+            for attr in ("ds", "_store", "store"):
+                store = getattr(file_obj, attr, None)
+                if store is None:
+                    continue
+                store_type = type(store).__name__.lower()
+                if any(k in store_type for k in ["reference", "kerchunk", "virtual"]):
+                    return True
+                fs = getattr(store, "fs", None)
+                if fs is not None and any(
+                    k in type(fs).__name__.lower() for k in ["reference", "kerchunk"]
+                ):
+                    return True
+
+        # Encoding-based detection
+        if hasattr(ds, "encoding"):
+            source = ds.encoding.get("source", "")
+            if source.endswith(".json") or "reference" in source.lower():
+                return True
+
+        # VirtualiZarr: ManifestArray backing
+        if hasattr(ds, "data_vars"):
+            for var in ds.data_vars.values():
+                data = getattr(var, "data", None)
+                if data is not None and "manifest" in type(data).__name__.lower():
+                    return True
+
+        return False
+
+    def optimize_chunks(
+        self,
+        ds: xr.Dataset | xr.DataArray,
+        target_chunk_mb: tuple[float, float] = (128, 512),
+        access_pattern: str = "auto",
+    ) -> dict[str, int]:
+        """Return the existing chunks — rechunking a Kerchunk dataset is a no-op."""
+        # Try dataset-level encoding first
+        if hasattr(ds, "encoding") and ds.encoding.get("chunks"):
+            enc = ds.encoding["chunks"]
+            if isinstance(enc, dict):
+                return dict(enc)
+            if hasattr(ds, "dims") and isinstance(enc, (list, tuple)):
+                return dict(zip(ds.dims, enc, strict=False))
+
+        # Fall back to the first data variable's encoding
+        if hasattr(ds, "data_vars"):
+            for var in ds.data_vars.values():
+                if hasattr(var, "encoding") and var.encoding.get("chunks"):
+                    enc = var.encoding["chunks"]
+                    if isinstance(enc, dict):
+                        return dict(enc)
+                    if hasattr(var, "dims") and isinstance(enc, (list, tuple)):
+                        return dict(zip(var.dims, enc, strict=False))
+
+        # Cannot determine — return empty; caller should use existing chunking
+        return {}
+
+    def optimize_compression(
+        self, ds: xr.Dataset | xr.DataArray, storage_location: str = "local"
+    ) -> dict[str, Any]:
+        """Compression is fixed in the underlying source files."""
+        return {}
+
+    def optimize_storage_options(
+        self, path_or_url: str, access_pattern: str = "auto"
+    ) -> dict[str, Any]:
+        """Return fsspec options appropriate for a Kerchunk reference store."""
+        options: dict[str, Any] = {
+            "engine": "zarr",
+            "backend_kwargs": {"consolidated": False},
+        }
+        if path_or_url.endswith(".json"):
+            remote_protocol = "s3" if "s3://" in path_or_url else "file"
+            options["storage_options"] = {
+                "fo": path_or_url,
+                "remote_protocol": remote_protocol,
+            }
+        return options
+
+
 def detect_storage_format(path_or_url: str, ds: xr.Dataset | xr.DataArray | None = None) -> str:
     """Detect storage format from path/URL and optional xarray object.
 
@@ -532,10 +847,16 @@ def detect_storage_format(path_or_url: str, ds: xr.Dataset | xr.DataArray | None
         ds: Optional xarray Dataset/DataArray to check for format hints
 
     Returns:
-        Format name: "zarr", "netcdf", or "unknown"
+        Format name: ``"zarr_v3"``, ``"zarr"``, ``"netcdf"``, ``"kerchunk"``, or
+        ``"unknown"``.  ``"zarr_v3"`` is returned for zarr-python ≥ 3.0 stores;
+        ``"kerchunk"`` is returned for Kerchunk / VirtualiZarr reference stores
+        (checked before zarr, since those stores present a zarr-like interface).
     """
-    # Create optimizers to test detection
-    optimizers = [
+    # Ordering matters: kerchunk wraps zarr, so check it first.
+    # zarr_v3 is checked before zarr v2 so the richer optimizer is preferred.
+    optimizers: list[tuple[str, IOOptimizer]] = [
+        ("kerchunk", KerchunkOptimizer()),
+        ("zarr_v3", ZarrV3Optimizer()),
         ("zarr", ZarrOptimizer()),
         ("netcdf", NetCDFOptimizer()),
     ]
@@ -597,10 +918,14 @@ def recommend_io_chunks(
     # Preserve original format for warnings
     original_format = detected_format
 
-    if detected_format == "zarr":
+    if detected_format == "zarr_v3":
+        optimizer: IOOptimizer = ZarrV3Optimizer(client)
+    elif detected_format == "zarr":
         optimizer = ZarrOptimizer(client)
     elif detected_format == "netcdf":
         optimizer = NetCDFOptimizer(client)
+    elif detected_format == "kerchunk":
+        optimizer = KerchunkOptimizer(client)
     else:
         # Default to Zarr optimizer for unknown formats
         optimizer = ZarrOptimizer(client)
@@ -678,6 +1003,11 @@ def recommend_io_chunks(
     warnings_list = []
     if original_format == "unknown":
         warnings_list.append("Could not detect storage format - using Zarr defaults")
+    elif original_format == "kerchunk":
+        warnings_list.append(
+            "Kerchunk/VirtualiZarr dataset detected — chunk boundaries are fixed by "
+            "underlying byte ranges. Rechunking requires a full data copy."
+        )
 
     if storage_location == "cloud" and chunk_mb < 64:
         warnings_list.append(
@@ -685,6 +1015,41 @@ def recommend_io_chunks(
         )
     elif storage_location == "local" and chunk_mb > 512:
         warnings_list.append(f"Large chunks ({chunk_mb:.1f}MB) may cause memory pressure")
+
+    # Build format-specific extras
+    extra: dict[str, Any] = {}
+    if detected_format == "zarr_v3" and isinstance(optimizer, ZarrV3Optimizer):
+        # Check whether sharding is worthwhile (chunk size exceeds threshold)
+        if chunk_mb >= optimizer._SHARD_THRESHOLD_MB and chunks:
+            # Inner chunks: target ~4 MB; outer = chunks (already computed)
+            if hasattr(ds, "sizes"):
+                dims_for_shard = dict(ds.sizes)
+            elif xr is not None and isinstance(ds, xr.DataArray):
+                dims_for_shard = dict(zip(ds.dims, ds.shape, strict=False))
+            else:
+                dims_for_shard = {}
+            if dims_for_shard:
+                inner: dict[str, int] = {}
+                inner_target = int(optimizer._INNER_CHUNK_MB * 1024 * 1024)
+                dtype_size_extra = 8  # conservative estimate
+                if np is not None:
+                    try:
+                        dtype_extra = (
+                            ds.dtype
+                            if hasattr(ds, "dtype")
+                            else next(iter(ds.data_vars.values())).dtype
+                        )
+                        dtype_size_extra = np.dtype(dtype_extra).itemsize
+                    except Exception:
+                        pass
+                wc = {d: chunks.get(d, dims_for_shard[d]) for d in dims_for_shard}
+                while dtype_size_extra * int(np.prod(list(wc.values()))) > inner_target:
+                    largest = max(wc, key=lambda d: wc[d])
+                    wc[largest] = max(1, wc[largest] // 2)
+                    if all(v == 1 for v in wc.values()):
+                        break
+                inner = dict(wc)
+                extra["sharding"] = optimizer._sharding_config(dims_for_shard, inner)
 
     # Create recommendation
     recommendation = IORecommendation(
@@ -695,6 +1060,7 @@ def recommend_io_chunks(
         access_pattern=access_pattern,
         estimated_throughput_mb_s=throughput,
         warnings=warnings_list,
+        extra=extra,
     )
 
     if verbose:
@@ -724,6 +1090,10 @@ def recommend_io_chunks(
         if chunks:
             print("\n Usage:")
             print(f"   ds_chunked = ds.chunk({chunks})")
+
+        if extra.get("sharding"):
+            sh = extra["sharding"]
+            print(f"\n Zarr v3 sharding: outer={sh['shards']}, inner={sh['inner_chunks']}")
 
         return recommendation
     else:
