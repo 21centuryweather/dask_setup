@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from dask.distributed import Client, LocalCluster
 
 from .cluster import calculate_memory_spec, create_cluster
@@ -15,6 +17,7 @@ from .topology import decide_topology, validate_topology
 
 
 def _resolve_configuration(
+    config: DaskSetupConfig | None = None,
     profile: str | None = None,
     workload_type: str = "io",
     max_workers: int | None = None,
@@ -25,38 +28,56 @@ def _resolve_configuration(
     min_workers: int | None = None,
     suggest_chunks: bool = False,
 ) -> DaskSetupConfig:
-    """Resolve final configuration from profile and explicit parameters.
+    """Resolve final configuration from a config object, profile, and explicit parameters.
 
     Priority order (highest to lowest):
-    1. Explicit parameters passed to setup_dask_client()
-    2. Profile configuration (if specified)
+    1. Explicit keyword parameters passed to setup_dask_client()
+    2. Config object (if provided via ``config=``)  OR  profile (if provided via ``profile=``)
     3. Default values
 
+    ``config`` and ``profile`` are mutually exclusive.
+
     Args:
-        profile: Profile name to load
-        **kwargs: Explicit parameters from setup_dask_client()
+        config: A pre-built DaskSetupConfig object to use as the base configuration.
+        profile: Profile name to load from disk/builtins as the base configuration.
+        workload_type: Workload type override (only applied when it differs from the default "io").
+        **kwargs: Additional explicit overrides forwarded from setup_dask_client().
 
     Returns:
         Resolved DaskSetupConfig
     """
+    if config is not None and profile is not None:
+        raise ValueError(
+            "Cannot specify both 'config' and 'profile'. "
+            "Pass a DaskSetupConfig object via 'config=' OR a profile name via 'profile=', not both."
+        )
+
     # Start with defaults
     defaults = DaskSetupConfig()
 
-    # Load profile if specified
-    profile_config = None
-    if profile:
+    # Resolve the base configuration: either a provided config object or a loaded profile
+    base_config = None
+
+    if config is not None:
+        # Caller supplied a ready-made DaskSetupConfig — use it as the profile-level base
+        base_config = config
+    elif profile is not None:
         manager = ConfigManager()
         profile_obj = manager.get_profile(profile)
         if profile_obj is None:
             available = list(manager.list_profiles().keys())
             raise ValueError(f"Profile '{profile}' not found. Available profiles: {available}")
-        profile_config = profile_obj.config
+        base_config = profile_obj.config
 
-    # Create explicit config from parameters (only non-default values)
+    # Collect explicitly-provided keyword overrides.
+    #
+    # Note: This heuristic compares each value against its default to decide whether it was
+    # explicitly set. Edge case: if you deliberately pass a value that *equals* the default
+    # (e.g. reserve_mem_gb=50.0 when the default is 50.0) it will be treated as "not set"
+    # and a base_config value will take precedence. To avoid this, use a DaskSetupConfig
+    # object via the 'config=' parameter instead.
     explicit_params = {}
 
-    # Only include parameters that were explicitly passed (not defaults)
-    # We'll use a simple heuristic - if it matches the default, assume it wasn't set
     if workload_type != "io":
         explicit_params["workload_type"] = workload_type
     if max_workers is not None:
@@ -76,10 +97,10 @@ def _resolve_configuration(
 
     explicit_config = DaskSetupConfig(**explicit_params) if explicit_params else None
 
-    # Merge configurations: defaults < profile < explicit
+    # Merge configurations: defaults < base_config < explicit overrides
     final_config = defaults
-    if profile_config:
-        final_config = final_config.merge_with(profile_config)
+    if base_config:
+        final_config = final_config.merge_with(base_config)
     if explicit_config:
         final_config = final_config.merge_with(explicit_config)
 
@@ -96,6 +117,7 @@ def setup_dask_client(
     min_workers: int | None = None,
     profile: str | None = None,
     suggest_chunks: bool = False,
+    config: DaskSetupConfig | None = None,
 ) -> tuple[Client, LocalCluster, str]:
     """Create a single-node Dask LocalCluster tuned for HPC login/compute nodes.
 
@@ -119,10 +141,15 @@ def setup_dask_client(
         Minimum workers when adaptive=True.
     profile : str or None
         Name of configuration profile to use. Profile settings are overridden by
-        explicit parameters.
+        explicit parameters. Mutually exclusive with ``config``.
     suggest_chunks : bool
         If True, print xarray chunking recommendations after cluster setup.
         Requires xarray and numpy to be installed.
+    config : DaskSetupConfig or None
+        A pre-built configuration object. When provided, all other parameters
+        except explicit overrides are ignored. Mutually exclusive with ``profile``.
+        This is the recommended way to avoid the default-value ambiguity that
+        occurs with individual keyword parameters.
 
     Returns
     -------
@@ -142,6 +169,7 @@ def setup_dask_client(
     """
     # Load and merge configuration
     config = _resolve_configuration(
+        config=config,
         profile=profile,
         workload_type=workload_type,
         max_workers=max_workers,
@@ -208,11 +236,17 @@ def setup_dask_client(
     if config.dashboard and config.dashboard_port:
         dashboard_address = f":{config.dashboard_port}"
 
+    # Map the boolean silence_logs config to a logging level.
+    # True  → suppress everything except errors (logging.ERROR)
+    # False → show warnings and above (logging.WARNING), which is a reasonable HPC default
+    silence_logs_level = logging.ERROR if config.silence_logs else logging.WARNING
+
     cluster = create_cluster(
         topology=topology,
         memory_spec=memory_spec,
         temp_dir=temp_dir,
         dashboard_address=dashboard_address,
+        silence_logs=silence_logs_level,
         adaptive=config.adaptive,
         min_workers=config.min_workers,
         memory_target=config.memory_target,

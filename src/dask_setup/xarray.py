@@ -238,11 +238,13 @@ def _calculate_optimal_chunks(
     # Calculate memory constraints
     worker_memory_bytes = cluster_info["memory_limit_bytes"]
     max_chunk_bytes = int(worker_memory_bytes * safety_factor)
-    int(target_chunk_mb[0] * 1024 * 1024)
+    target_min_bytes = int(target_chunk_mb[0] * 1024 * 1024)
     target_max_bytes = int(target_chunk_mb[1] * 1024 * 1024)
 
-    # Ensure target fits within memory constraint
+    # Ensure target range fits within the memory constraint
     effective_target_max = min(target_max_bytes, max_chunk_bytes)
+    # Floor: don't recommend chunks smaller than the configured minimum (but never exceed the cap)
+    effective_target_min = min(target_min_bytes, effective_target_max)
 
     # Auto-detect workload type if needed
     if workload_type == "auto":

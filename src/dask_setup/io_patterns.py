@@ -298,9 +298,9 @@ class ZarrOptimizer(IOOptimizer):
 
                 # Round to ~6 significant digits for float32, ~12 for float64
                 if dtype == np.float32:
-                    filters.append(numcodecs.FixedScaleOffset(dtype=dtype, scale=1e6))
+                    filters.append(numcodecs.FixedScaleOffset(dtype=dtype, offset=0, scale=1e6))
                 elif dtype == np.float64:
-                    filters.append(numcodecs.FixedScaleOffset(dtype=dtype, scale=1e12))
+                    filters.append(numcodecs.FixedScaleOffset(dtype=dtype, offset=0, scale=1e12))
             except ImportError:
                 pass  # numcodecs not available
 
