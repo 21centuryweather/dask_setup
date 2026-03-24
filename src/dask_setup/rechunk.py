@@ -1,11 +1,16 @@
-"""Rechunking helper for xarray datasets using the rechunker library.
+"""Rechunking helper for xarray datasets.
 
-Provides a thin, HPC-aware wrapper around the ``rechunker`` library that:
+Provides a thin, HPC-aware wrapper that rechunks xarray datasets into new
+chunk shapes using either the ``rechunker`` library (preferred, when
+compatible) or a native ``xarray.to_zarr()`` fallback.
+
 - Routes both the intermediate temp store and the output Zarr store to the
   Dask spill directory (typically ``$PBS_JOBFS``) for fast local NVMe I/O.
 - Handles temp-store cleanup automatically after execution.
 - Emits structured log messages during rechunking so users can track progress.
 - Provides clear error messages when optional dependencies are missing.
+- Falls back gracefully when ``rechunker`` is incompatible with the installed
+  xarray version (e.g. the ``zarr_format`` argument added in xarray ≥ 2024.x).
 """
 
 from __future__ import annotations
@@ -23,6 +28,45 @@ if TYPE_CHECKING:
 logger = get_logger("rechunk")
 
 __all__ = ["rechunk_dataset"]
+
+
+def _rechunk_native(ds: Any, target_chunks: dict, output_path: Path, xr: Any) -> None:
+    """Rechunk *ds* to *target_chunks* and write to *output_path* via xarray.to_zarr().
+
+    This is the fallback path used when ``rechunker`` is incompatible with the
+    installed xarray version.  For a Dask-backed dataset the scheduler computes
+    and writes one chunk at a time, so peak memory stays within the per-worker
+    budget even for very large datasets.
+
+    Parameters
+    ----------
+    ds : xr.Dataset or xr.DataArray
+    target_chunks : dict[str, int]
+    output_path : Path  — destination Zarr store (must not already exist)
+    xr : the xarray module (already imported by caller)
+    """
+    rechunked = ds.chunk(target_chunks)
+    rechunked.to_zarr(str(output_path), mode="w")
+    # Consolidate metadata so xr.open_zarr(consolidated=True) works
+    try:
+        import zarr as _zarr
+
+        _zarr.consolidate_metadata(str(output_path))
+    except Exception:
+        pass  # optional — open_zarr falls back to consolidated=False
+
+
+def _open_rechunked(output_path: Path, ds: Any, xr: Any) -> Any:
+    """Open the rechunked Zarr store and return Dataset or DataArray to match *ds*."""
+    try:
+        rechunked = xr.open_zarr(str(output_path), consolidated=True)
+    except Exception:
+        rechunked = xr.open_zarr(str(output_path), consolidated=False)
+
+    if isinstance(ds, xr.DataArray):
+        var_name = ds.name or list(rechunked.data_vars)[0]
+        return rechunked[var_name]
+    return rechunked
 
 
 def rechunk_dataset(
@@ -162,6 +206,49 @@ def rechunk_dataset(
         plan.execute()
         logger.info("Rechunking complete", output_path=str(output_path))
 
+    except TypeError as exc:
+        # rechunker calls xarray's extract_zarr_variable_encoding() without the
+        # zarr_format keyword argument introduced in newer xarray versions.  When
+        # this incompatibility is detected, fall back to the native xarray path.
+        if "zarr_format" in str(exc) and "extract_zarr_variable_encoding" in str(exc):
+            logger.warning(
+                "rechunker is incompatible with the installed xarray version "
+                "(extract_zarr_variable_encoding requires zarr_format). "
+                "Falling back to native xarray.to_zarr() rechunking.",
+                error=str(exc),
+            )
+            # Clean up whatever rechunker may have partially written
+            for p in (output_path, temp_store_path):
+                if p.exists():
+                    shutil.rmtree(p, ignore_errors=True)
+            try:
+                _rechunk_native(ds, target_chunks, output_path, xr)
+                logger.info(
+                    "Rechunking complete (native fallback)", output_path=str(output_path)
+                )
+            except Exception as fallback_exc:
+                if output_path.exists():
+                    shutil.rmtree(output_path, ignore_errors=True)
+                raise RuntimeError(
+                    f"rechunk_dataset failed (native fallback): {fallback_exc}\n"
+                    f"  target_chunks = {target_chunks}\n"
+                    f"  output_path   = {output_path}\n"
+                ) from fallback_exc
+            # temp_store was never created by native path — nothing to clean up
+            return _open_rechunked(output_path, ds, xr)
+        # Some other TypeError — treat as a normal failure
+        logger.warning("Rechunking failed; cleaning up partial output", error=str(exc))
+        for p in (output_path, temp_store_path):
+            if p.exists():
+                shutil.rmtree(p, ignore_errors=True)
+        raise RuntimeError(
+            f"rechunk_dataset failed: {exc}\n"
+            f"  target_chunks = {target_chunks}\n"
+            f"  output_path   = {output_path}\n"
+            "Check that max_mem is not larger than per-worker memory, "
+            "and that dask_tmp has sufficient free space."
+        ) from exc
+
     except Exception as exc:
         logger.warning("Rechunking failed; cleaning up partial output", error=str(exc))
         # Remove partial output to avoid leaving corrupt Zarr stores on disk
@@ -182,15 +269,4 @@ def rechunk_dataset(
             logger.debug("Intermediate temp store removed", path=str(temp_store_path))
 
     # --- Open and return rechunked dataset -----------------------------------
-    try:
-        rechunked = xr.open_zarr(str(output_path), consolidated=True)
-    except Exception:
-        # consolidated metadata may not be written; fall back
-        rechunked = xr.open_zarr(str(output_path), consolidated=False)
-
-    # Return the same type as input (Dataset → Dataset, DataArray → DataArray)
-    if isinstance(ds, xr.DataArray):
-        var_name = ds.name or list(rechunked.data_vars)[0]
-        return rechunked[var_name]
-
-    return rechunked
+    return _open_rechunked(output_path, ds, xr)
