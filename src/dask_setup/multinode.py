@@ -767,35 +767,16 @@ def setup_interactive_cluster(
             "Interactive cluster: single node, using LocalCluster",
             node=unique_nodes[0] if unique_nodes else "unknown",
         )
-        from .resources import detect_resources
-        from .topology import decide_topology
-        from .cluster import create_cluster, configure_dask_settings
-        from .tempdir import create_dask_temp_dir
+        # Delegate to setup_dask_client with mode="local" so all resource
+        # detection, topology, memory-spec, and cluster-creation logic is
+        # handled in one place with the correct calling conventions.
+        from .client import setup_dask_client
 
-        resources = detect_resources(fallback=True)
-        resolved_wl = workload_type
-        if workload_type == "auto":
-            try:
-                from .workload import infer_workload_type
-                resolved_wl = infer_workload_type(None, resources)
-            except Exception:
-                resolved_wl = "cpu"
-
-        from .config import DaskSetupConfig
-        cfg_obj = DaskSetupConfig(workload_type=resolved_wl)
-        topology = decide_topology(cfg_obj, resources)
-        configure_dask_settings(resources, topology)
-        dask_tmp = create_dask_temp_dir()
-        cluster = create_cluster(topology, resources, str(dask_tmp))
-        client = Client(cluster)
-        if wait_for_workers:
-            _wait_for_workers(
-                client, cluster,
-                n_jobs=1,
-                workers_per_job=topology.n_workers,
-                timeout=worker_timeout,
-            )
-        return client, cluster, str(dask_tmp)
+        result = setup_dask_client(workload_type=workload_type, mode="local")
+        # setup_dask_client returns a 3-tuple (client, cluster, tmp_path)
+        # when ds is not provided.
+        client, cluster, tmp_path = result[0], result[1], result[2]
+        return client, cluster, tmp_path
 
     # --- Multi-node path (SSHCluster) ---------------------------------------
     logger.info(

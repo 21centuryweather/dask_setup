@@ -1008,10 +1008,10 @@ class TestParsePBSNodefile:
 
 
 class TestSetupInteractiveClusterSingleNode:
-    """Single-node interactive cluster uses LocalCluster."""
+    """Single-node interactive cluster delegates to setup_dask_client(mode='local')."""
 
-    def test_single_node_uses_local_cluster(self, tmp_path, monkeypatch):
-        """With one unique node in PBS_NODEFILE, a LocalCluster is created."""
+    def test_single_node_delegates_to_local(self, tmp_path, monkeypatch):
+        """With one unique node in PBS_NODEFILE, setup_dask_client(mode='local') is called."""
         from dask_setup.multinode import setup_interactive_cluster
 
         nodefile = tmp_path / "nodefile"
@@ -1019,28 +1019,22 @@ class TestSetupInteractiveClusterSingleNode:
         monkeypatch.setenv("PBS_NODEFILE", str(nodefile))
 
         mock_client = MagicMock()
-        mock_client.scheduler_info.return_value = {"workers": {"w1": {}}}
         mock_cluster = MagicMock()
 
-        with (
-            patch("dask_setup.multinode.Client", return_value=mock_client),
-            patch("dask_setup.multinode.create_cluster", return_value=mock_cluster),
-            patch("dask_setup.multinode.detect_resources", return_value={}),
-            patch("dask_setup.multinode.decide_topology") as mock_topo,
-            patch("dask_setup.multinode.configure_dask_settings"),
-            patch("dask_setup.multinode.create_dask_temp_dir", return_value=tmp_path),
-            patch("dask_setup.multinode._wait_for_workers"),
-        ):
-            from dask_setup.config import DaskSetupConfig
-            mock_topo.return_value = MagicMock(n_workers=16, spec=["n_workers"])
-
+        # setup_dask_client is imported inside the function from .client, so
+        # the patch target is dask_setup.client.setup_dask_client.
+        with patch(
+            "dask_setup.client.setup_dask_client",
+            return_value=(mock_client, mock_cluster, str(tmp_path)),
+        ) as mock_sdc:
             client, cluster, tmp = setup_interactive_cluster(workload_type="cpu")
 
+        mock_sdc.assert_called_once_with(workload_type="cpu", mode="local")
         assert client is mock_client
         assert cluster is mock_cluster
 
     def test_no_nodefile_falls_back_to_local(self, monkeypatch):
-        """No PBS_NODEFILE and no SLURM env → single-node LocalCluster path."""
+        """No PBS_NODEFILE and no SLURM env → single-node path → setup_dask_client(mode='local')."""
         from dask_setup.multinode import setup_interactive_cluster
 
         monkeypatch.delenv("PBS_NODEFILE", raising=False)
@@ -1048,21 +1042,32 @@ class TestSetupInteractiveClusterSingleNode:
         monkeypatch.delenv("SLURM_JOB_NODELIST", raising=False)
 
         mock_client = MagicMock()
-        mock_client.scheduler_info.return_value = {"workers": {"w1": {}}}
         mock_cluster = MagicMock()
 
-        with (
-            patch("dask_setup.multinode.Client", return_value=mock_client),
-            patch("dask_setup.multinode.create_cluster", return_value=mock_cluster),
-            patch("dask_setup.multinode.detect_resources", return_value={}),
-            patch("dask_setup.multinode.decide_topology", return_value=MagicMock(n_workers=4, spec=["n_workers"])),
-            patch("dask_setup.multinode.configure_dask_settings"),
-            patch("dask_setup.multinode.create_dask_temp_dir", return_value=Path("/tmp/dask")),
-            patch("dask_setup.multinode._wait_for_workers"),
-        ):
+        with patch(
+            "dask_setup.client.setup_dask_client",
+            return_value=(mock_client, mock_cluster, "/tmp/dask"),
+        ) as mock_sdc:
             client, cluster, tmp = setup_interactive_cluster()
 
+        mock_sdc.assert_called_once_with(workload_type="cpu", mode="local")
         assert client is mock_client
+
+    def test_workload_type_forwarded(self, monkeypatch):
+        """workload_type is forwarded unchanged to setup_dask_client."""
+        from dask_setup.multinode import setup_interactive_cluster
+
+        monkeypatch.delenv("PBS_NODEFILE", raising=False)
+        monkeypatch.delenv("SLURM_NODELIST", raising=False)
+        monkeypatch.delenv("SLURM_JOB_NODELIST", raising=False)
+
+        with patch(
+            "dask_setup.client.setup_dask_client",
+            return_value=(MagicMock(), MagicMock(), ""),
+        ) as mock_sdc:
+            setup_interactive_cluster(workload_type="io")
+
+        mock_sdc.assert_called_once_with(workload_type="io", mode="local")
 
 
 # ---------------------------------------------------------------------------
@@ -1086,9 +1091,11 @@ class TestSetupInteractiveClusterMultiNode:
         mock_client = MagicMock()
         mock_client.scheduler_info.return_value = {"workers": {"w1": {}}}
 
+        # SSHCluster and Client are imported inside the function from
+        # dask.distributed, so patch them there.
         with (
-            patch("dask_setup.multinode.SSHCluster", return_value=mock_ssh_cluster) as mock_ssh,
-            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask.distributed.SSHCluster", return_value=mock_ssh_cluster) as mock_ssh,
+            patch("dask.distributed.Client", return_value=mock_client),
             patch("dask_setup.multinode._wait_for_workers"),
         ):
             client, cluster, tmp = setup_interactive_cluster(workload_type="cpu")
@@ -1112,8 +1119,8 @@ class TestSetupInteractiveClusterMultiNode:
         mock_client.scheduler_info.return_value = {"workers": {}}
 
         with (
-            patch("dask_setup.multinode.SSHCluster", return_value=mock_ssh_cluster) as mock_ssh,
-            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask.distributed.SSHCluster", return_value=mock_ssh_cluster) as mock_ssh,
+            patch("dask.distributed.Client", return_value=mock_client),
             patch("dask_setup.multinode._wait_for_workers"),
         ):
             setup_interactive_cluster(workload_type="cpu")
@@ -1136,8 +1143,8 @@ class TestSetupInteractiveClusterMultiNode:
         mock_client.scheduler_info.return_value = {"workers": {}}
 
         with (
-            patch("dask_setup.multinode.SSHCluster", return_value=mock_ssh_cluster) as mock_ssh,
-            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask.distributed.SSHCluster", return_value=mock_ssh_cluster) as mock_ssh,
+            patch("dask.distributed.Client", return_value=mock_client),
             patch("dask_setup.multinode._wait_for_workers"),
         ):
             setup_interactive_cluster(workload_type="io")
