@@ -669,3 +669,222 @@ def test_version_is_2():
     import dask_setup
 
     assert dask_setup.__version__.startswith("2.")
+
+
+# ---------------------------------------------------------------------------
+# _wait_for_workers
+# ---------------------------------------------------------------------------
+
+
+class TestWaitForWorkers:
+    """Tests for the _wait_for_workers helper."""
+
+    def test_returns_when_workers_connect(self):
+        """_wait_for_workers should return normally when wait_for_workers succeeds."""
+        from dask_setup.multinode import _wait_for_workers
+
+        mock_client = MagicMock()
+        mock_client.wait_for_workers.return_value = None  # succeeds
+        mock_client.scheduler_info.return_value = {"workers": {"w1": {}, "w2": {}}}
+        mock_cluster = MagicMock()
+        mock_cluster.scheduler_address = "tcp://127.0.0.1:8786"
+
+        # Should not raise
+        _wait_for_workers(mock_client, mock_cluster, n_jobs=2, workers_per_job=4, timeout=60.0)
+        mock_client.wait_for_workers.assert_called_once_with(1, timeout=60.0)
+
+    def test_raises_timeout_error_with_diagnostic_message(self):
+        """_wait_for_workers should raise TimeoutError with helpful info on timeout."""
+        from dask_setup.multinode import _wait_for_workers
+
+        mock_client = MagicMock()
+        mock_client.wait_for_workers.side_effect = TimeoutError("timed out")
+        mock_cluster = MagicMock()
+        mock_cluster.scheduler_address = "tcp://10.0.0.1:8786"
+
+        with pytest.raises(TimeoutError) as exc_info:
+            _wait_for_workers(mock_client, mock_cluster, n_jobs=3, workers_per_job=4, timeout=30.0)
+
+        msg = str(exc_info.value)
+        assert "30" in msg            # timeout value
+        assert "3" in msg             # n_jobs
+        assert "12" in msg            # expected_total = 3 * 4
+        assert "qstat" in msg         # actionable hint
+
+    def test_raises_on_any_exception_from_wait(self):
+        """Non-TimeoutError exceptions from wait_for_workers are also wrapped."""
+        from dask_setup.multinode import _wait_for_workers
+
+        mock_client = MagicMock()
+        mock_client.wait_for_workers.side_effect = RuntimeError("scheduler gone")
+        mock_cluster = MagicMock()
+
+        with pytest.raises(TimeoutError):
+            _wait_for_workers(mock_client, mock_cluster, n_jobs=1, workers_per_job=1, timeout=10.0)
+
+    def test_timeout_message_includes_scheduler_address(self):
+        """Timeout message should include the scheduler address for debugging."""
+        from dask_setup.multinode import _wait_for_workers
+
+        mock_client = MagicMock()
+        mock_client.wait_for_workers.side_effect = TimeoutError("timed out")
+        mock_cluster = MagicMock()
+        mock_cluster.scheduler_address = "tcp://hpc-node-01:8786"
+
+        with pytest.raises(TimeoutError, match="hpc-node-01"):
+            _wait_for_workers(mock_client, mock_cluster, n_jobs=1, workers_per_job=1, timeout=5.0)
+
+
+# ---------------------------------------------------------------------------
+# setup_pbs_cluster — wait_for_workers integration
+# ---------------------------------------------------------------------------
+
+
+class TestSetupPBSClusterWait:
+    """Tests for wait_for_workers behaviour in setup_pbs_cluster."""
+
+    def _make_mocks(self):
+        mock_cluster = MagicMock()
+        mock_cluster.scheduler_address = "tcp://127.0.0.1:8786"
+        mock_client = MagicMock()
+        mock_client.scheduler_info.return_value = {"workers": {"w1": {}}}
+        return mock_cluster, mock_client
+
+    def test_wait_for_workers_called_by_default(self):
+        """setup_pbs_cluster should call _wait_for_workers when wait_for_workers=True."""
+        from dask_setup.multinode import setup_pbs_cluster
+
+        mock_cluster, mock_client = self._make_mocks()
+
+        with (
+            patch("dask_setup.multinode.PBSCluster", return_value=mock_cluster),
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask_setup.multinode._wait_for_workers") as mock_wait,
+        ):
+            # Inline import so the patch applies
+            import importlib
+            import dask_setup.multinode as mn
+            mn._check_jobqueue = lambda: None  # skip import check
+
+            client, cluster, _ = setup_pbs_cluster(
+                workers_per_node=4,
+                cores_per_worker=8,
+                mem_per_worker_gb=32,
+                n_workers=2,
+                wait_for_workers=True,
+                worker_timeout=120.0,
+            )
+
+        mock_wait.assert_called_once()
+        call_kwargs = mock_wait.call_args
+        assert call_kwargs.args[4] == 120.0  # timeout
+
+    def test_wait_skipped_when_disabled(self):
+        """setup_pbs_cluster should not call _wait_for_workers when wait_for_workers=False."""
+        from dask_setup.multinode import setup_pbs_cluster
+
+        mock_cluster, mock_client = self._make_mocks()
+
+        with (
+            patch("dask_setup.multinode.PBSCluster", return_value=mock_cluster),
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask_setup.multinode._wait_for_workers") as mock_wait,
+        ):
+            import dask_setup.multinode as mn
+            mn._check_jobqueue = lambda: None
+
+            setup_pbs_cluster(
+                workers_per_node=1,
+                cores_per_worker=4,
+                mem_per_worker_gb=8,
+                wait_for_workers=False,
+            )
+
+        mock_wait.assert_not_called()
+
+    def test_timeout_error_propagates(self):
+        """A TimeoutError from _wait_for_workers should propagate to the caller."""
+        from dask_setup.multinode import setup_pbs_cluster
+
+        mock_cluster, mock_client = self._make_mocks()
+
+        with (
+            patch("dask_setup.multinode.PBSCluster", return_value=mock_cluster),
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch(
+                "dask_setup.multinode._wait_for_workers",
+                side_effect=TimeoutError("no workers"),
+            ),
+        ):
+            import dask_setup.multinode as mn
+            mn._check_jobqueue = lambda: None
+
+            with pytest.raises(TimeoutError, match="no workers"):
+                setup_pbs_cluster(
+                    workers_per_node=1,
+                    cores_per_worker=4,
+                    mem_per_worker_gb=8,
+                )
+
+
+# ---------------------------------------------------------------------------
+# setup_slurm_cluster — wait_for_workers integration
+# ---------------------------------------------------------------------------
+
+
+class TestSetupSLURMClusterWait:
+    """Mirrors TestSetupPBSClusterWait for the SLURM path."""
+
+    def _make_mocks(self):
+        mock_cluster = MagicMock()
+        mock_cluster.scheduler_address = "tcp://127.0.0.1:8786"
+        mock_client = MagicMock()
+        mock_client.scheduler_info.return_value = {"workers": {"w1": {}}}
+        return mock_cluster, mock_client
+
+    def test_wait_for_workers_called_by_default(self):
+        from dask_setup.multinode import setup_slurm_cluster
+
+        mock_cluster, mock_client = self._make_mocks()
+
+        with (
+            patch("dask_setup.multinode.SLURMCluster", return_value=mock_cluster),
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask_setup.multinode._wait_for_workers") as mock_wait,
+        ):
+            import dask_setup.multinode as mn
+            mn._check_jobqueue = lambda: None
+
+            setup_slurm_cluster(
+                workers_per_node=2,
+                cores_per_worker=16,
+                mem_per_worker_gb=64,
+                n_workers=4,
+                wait_for_workers=True,
+                worker_timeout=600.0,
+            )
+
+        mock_wait.assert_called_once()
+        assert mock_wait.call_args.args[4] == 600.0  # timeout
+
+    def test_wait_skipped_when_disabled(self):
+        from dask_setup.multinode import setup_slurm_cluster
+
+        mock_cluster, mock_client = self._make_mocks()
+
+        with (
+            patch("dask_setup.multinode.SLURMCluster", return_value=mock_cluster),
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask_setup.multinode._wait_for_workers") as mock_wait,
+        ):
+            import dask_setup.multinode as mn
+            mn._check_jobqueue = lambda: None
+
+            setup_slurm_cluster(
+                workers_per_node=1,
+                cores_per_worker=4,
+                mem_per_worker_gb=8,
+                wait_for_workers=False,
+            )
+
+        mock_wait.assert_not_called()

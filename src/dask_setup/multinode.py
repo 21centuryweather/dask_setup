@@ -323,6 +323,69 @@ def _worker_extra_args(cfg: MultiNodeConfig) -> list[str]:
     return args
 
 
+def _wait_for_workers(
+    client: Any,
+    cluster: Any,
+    n_jobs: int,
+    workers_per_job: int,
+    timeout: float,
+) -> None:
+    """Block until at least one worker connects, or raise ``TimeoutError``.
+
+    ``cluster.scale()`` with dask-jobqueue merely *submits* jobs to the HPC
+    scheduler — it does not wait for those jobs to be allocated and started.
+    ``Client(cluster)`` connects to the *scheduler* process (which starts
+    immediately), but the scheduler has 0 workers until PBS/SLURM actually
+    launches the submitted jobs.
+
+    This helper calls ``client.wait_for_workers(1, timeout=timeout)`` so that
+    callers always receive a client that has at least one live worker.
+
+    Parameters
+    ----------
+    client:
+        The connected ``dask.distributed.Client``.
+    cluster:
+        The ``PBSCluster`` / ``SLURMCluster`` (used for diagnostic info only).
+    n_jobs:
+        Number of jobs that were submitted (used in the timeout message).
+    workers_per_job:
+        Workers per job (``MultiNodeConfig.workers_per_node``), used to
+        compute the expected total worker count in the timeout message.
+    timeout:
+        Maximum seconds to wait before raising ``TimeoutError``.
+    """
+    expected_total = n_jobs * workers_per_job
+    logger.debug(
+        "Waiting for workers",
+        expected_total=expected_total,
+        timeout=timeout,
+    )
+    try:
+        client.wait_for_workers(1, timeout=timeout)
+    except Exception as exc:
+        # dask raises TimeoutError or asyncio.TimeoutError depending on version
+        scheduler_addr = getattr(cluster, "scheduler_address", "unknown")
+        raise TimeoutError(
+            f"No Dask workers connected after {timeout:.0f} s.\n"
+            f"\n"
+            f"  Jobs submitted : {n_jobs}\n"
+            f"  Expected workers: {expected_total} ({workers_per_job} per job)\n"
+            f"  Scheduler address: {scheduler_addr}\n"
+            f"\n"
+            f"Common causes:\n"
+            f"  - Jobs are still queued — raise worker_timeout or check the queue "
+            f"with 'qstat' / 'squeue'\n"
+            f"  - Workers started but couldn't reach the scheduler — check that "
+            f"the scheduler port is reachable from compute nodes\n"
+            f"  - Environment or import errors inside the worker — check the "
+            f"worker job logs (usually in ~/dask-worker-space/ or the PBS log dir)\n"
+        ) from exc
+
+    n_connected = len(client.scheduler_info().get("workers", {}))
+    logger.debug("Workers connected", n_connected=n_connected, expected_total=expected_total)
+
+
 def setup_pbs_cluster(
     config: MultiNodeConfig | None = None,
     *,
@@ -342,6 +405,8 @@ def setup_pbs_cluster(
     min_jobs: int | None = None,
     max_jobs: int | None = None,
     n_workers: int = 1,
+    wait_for_workers: bool = True,
+    worker_timeout: float = 300.0,
 ) -> tuple[Any, Any, SharedTempDir | None]:
     """Set up a multi-node Dask cluster backed by PBS/Torque.
 
@@ -359,6 +424,17 @@ def setup_pbs_cluster(
     n_workers:
         Number of worker *jobs* to submit immediately (before any adaptive
         scaling kicks in).
+    wait_for_workers:
+        If ``True`` (default), block until at least one worker has connected
+        to the scheduler before returning.  This prevents the client from
+        appearing to have 0 workers when PBS has not yet started the submitted
+        jobs.  Set to ``False`` to return immediately and poll
+        ``client.wait_for_workers()`` yourself.
+    worker_timeout:
+        Seconds to wait for workers to come online when *wait_for_workers* is
+        ``True``.  Defaults to 300 s (5 minutes).  Raise this on queues with
+        long wait times.  A ``TimeoutError`` is raised (with a diagnostic
+        message) if no workers connect within this window.
 
     Returns
     -------
@@ -427,6 +503,10 @@ def setup_pbs_cluster(
 
     client = Client(cluster)
     logger.debug("PBSCluster client connected", scheduler=str(cluster.scheduler_address))
+
+    if wait_for_workers:
+        _wait_for_workers(client, cluster, n_workers, cfg.workers_per_node, worker_timeout)
+
     return client, cluster, shared_tmp
 
 
@@ -449,6 +529,8 @@ def setup_slurm_cluster(
     min_jobs: int | None = None,
     max_jobs: int | None = None,
     n_workers: int = 1,
+    wait_for_workers: bool = True,
+    worker_timeout: float = 300.0,
 ) -> tuple[Any, Any, SharedTempDir | None]:
     """Set up a multi-node Dask cluster backed by SLURM.
 
@@ -461,6 +543,12 @@ def setup_slurm_cluster(
         A :class:`MultiNodeConfig` instance.
     n_workers:
         Number of worker jobs to submit immediately.
+    wait_for_workers:
+        If ``True`` (default), block until at least one worker has connected
+        to the scheduler before returning.  Set to ``False`` to return
+        immediately.
+    worker_timeout:
+        Seconds to wait for workers to come online.  Defaults to 300 s.
 
     Returns
     -------
@@ -519,6 +607,10 @@ def setup_slurm_cluster(
 
     client = Client(cluster)
     logger.debug("SLURMCluster client connected", scheduler=str(cluster.scheduler_address))
+
+    if wait_for_workers:
+        _wait_for_workers(client, cluster, n_workers, cfg.workers_per_node, worker_timeout)
+
     return client, cluster, shared_tmp
 
 
