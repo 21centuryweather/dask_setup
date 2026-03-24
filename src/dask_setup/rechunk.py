@@ -15,6 +15,7 @@ compatible) or a native ``xarray.to_zarr()`` fallback.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import time
 from pathlib import Path
@@ -48,12 +49,10 @@ def _rechunk_native(ds: Any, target_chunks: dict, output_path: Path, xr: Any) ->
     rechunked = ds.chunk(target_chunks)
     rechunked.to_zarr(str(output_path), mode="w")
     # Consolidate metadata so xr.open_zarr(consolidated=True) works
-    try:
+    with contextlib.suppress(Exception):
         import zarr as _zarr
 
         _zarr.consolidate_metadata(str(output_path))
-    except Exception:
-        pass  # optional — open_zarr falls back to consolidated=False
 
 
 def _open_rechunked(output_path: Path, ds: Any, xr: Any) -> Any:
@@ -223,9 +222,7 @@ def rechunk_dataset(
                     shutil.rmtree(p, ignore_errors=True)
             try:
                 _rechunk_native(ds, target_chunks, output_path, xr)
-                logger.info(
-                    "Rechunking complete (native fallback)", output_path=str(output_path)
-                )
+                logger.info("Rechunking complete (native fallback)", output_path=str(output_path))
             except Exception as fallback_exc:
                 if output_path.exists():
                     shutil.rmtree(output_path, ignore_errors=True)

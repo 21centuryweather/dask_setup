@@ -209,14 +209,36 @@ def _analyze_dataset(ds: xr.Dataset | xr.DataArray) -> dict[str, Any]:
 
 
 _TEMPORAL_PATTERNS: tuple[str, ...] = (
-    "time", "date", "step", "record", "sample", "day", "month", "year", "hour",
+    "time",
+    "date",
+    "step",
+    "record",
+    "sample",
+    "day",
+    "month",
+    "year",
+    "hour",
 )
 _SPATIAL_PATTERNS: tuple[str, ...] = (
-    "lat", "lon", "latitude", "longitude",
-    "x", "y", "z",
-    "north", "south", "east", "west",
-    "altitude", "depth", "level", "lev", "height", "pressure",
-    "ni", "nj",  # NEMO / irregular-grid names
+    "lat",
+    "lon",
+    "latitude",
+    "longitude",
+    "x",
+    "y",
+    "z",
+    "north",
+    "south",
+    "east",
+    "west",
+    "altitude",
+    "depth",
+    "level",
+    "lev",
+    "height",
+    "pressure",
+    "ni",
+    "nj",  # NEMO / irregular-grid names
 )
 
 
@@ -287,13 +309,11 @@ def _calculate_optimal_chunks(
     # Calculate memory constraints
     worker_memory_bytes = cluster_info["memory_limit_bytes"]
     max_chunk_bytes = int(worker_memory_bytes * safety_factor)
-    target_min_bytes = int(target_chunk_mb[0] * 1024 * 1024)
     target_max_bytes = int(target_chunk_mb[1] * 1024 * 1024)
 
     # Ensure target range fits within the memory constraint
     effective_target_max = min(target_max_bytes, max_chunk_bytes)
     # Floor: don't recommend chunks smaller than the configured minimum (but never exceed the cap)
-    effective_target_min = min(target_min_bytes, effective_target_max)
 
     # Auto-detect workload type if needed
     if workload_type == "auto":
@@ -421,14 +441,8 @@ def _calculate_optimal_chunks(
     else:  # mixed workload
         # Mixed: balance between streaming and compute efficiency
         # Prefer to chunk spatial free-dims while keeping temporal free-dims large
-        spatial_free = [
-            d for d in free_dims
-            if any(t in d.lower() for t in _SPATIAL_PATTERNS)
-        ]
-        time_free = [
-            d for d in free_dims
-            if any(t in d.lower() for t in _TEMPORAL_PATTERNS)
-        ]
+        spatial_free = [d for d in free_dims if any(t in d.lower() for t in _SPATIAL_PATTERNS)]
+        time_free = [d for d in free_dims if any(t in d.lower() for t in _TEMPORAL_PATTERNS)]
 
         current_bytes = _estimate_chunk_bytes(working_chunks)
 
@@ -550,7 +564,7 @@ def _format_chunk_report(
 
     # chunk_domain line (if set)
     chunk_domain = recommendation.dataset_info.get("chunk_domain")
-    locked_dims  = recommendation.dataset_info.get("locked_dims", [])
+    locked_dims = recommendation.dataset_info.get("locked_dims", [])
     if chunk_domain is not None:
         lines.append(f" Chunk domain: {chunk_domain}")
         if locked_dims:
@@ -746,7 +760,7 @@ def recommend_chunks(
                         other_chunk = current_chunking.get(other_dim)
                         if other_chunk is None:
                             elements_in_chunk *= dataset_info["dims"].get(other_dim, 1)
-                        elif isinstance(other_chunk, (list, tuple)) and other_chunk:
+                        elif isinstance(other_chunk, list | tuple) and other_chunk:
                             elements_in_chunk *= max(other_chunk)
                         elif isinstance(other_chunk, int):
                             elements_in_chunk *= other_chunk
@@ -877,7 +891,7 @@ def validate_chunks(
             if other_chunk_sizes is None:
                 # dimension is not chunked — treat as one piece
                 other_extent = dims.get(other_dim, 1)
-            elif isinstance(other_chunk_sizes, (list, tuple)) and other_chunk_sizes:
+            elif isinstance(other_chunk_sizes, list | tuple) and other_chunk_sizes:
                 other_extent = max(other_chunk_sizes)
             elif isinstance(other_chunk_sizes, int):
                 other_extent = other_chunk_sizes

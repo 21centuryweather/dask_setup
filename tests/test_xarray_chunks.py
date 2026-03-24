@@ -930,6 +930,7 @@ class TestRealXarrayIntegration:
 # _classify_dimensions
 # ---------------------------------------------------------------------------
 
+
 class TestClassifyDimensions:
     """Tests for the dimension classifier helper."""
 
@@ -974,7 +975,9 @@ class TestClassifyDimensions:
 
         for name in ("date", "step", "record", "month", "year", "hour"):
             dims = {name: 10}
-            assert name in _classify_dimensions(dims)["temporal"], f"Expected {name!r} to be temporal"
+            assert name in _classify_dimensions(dims)["temporal"], (
+                f"Expected {name!r} to be temporal"
+            )
 
     def test_empty_dims(self):
         from dask_setup.xarray import _classify_dimensions
@@ -986,6 +989,7 @@ class TestClassifyDimensions:
 # ---------------------------------------------------------------------------
 # chunk_domain parameter in _calculate_optimal_chunks
 # ---------------------------------------------------------------------------
+
 
 class TestChunkDomain:
     """Tests for chunk_domain constraint in chunk calculations."""
@@ -1015,8 +1019,8 @@ class TestChunkDomain:
         return {
             "n_workers": 4,
             "threads_per_worker": 4,
-            "memory_limit_bytes": 8 * 1024 ** 3,
-            "total_memory_bytes": 32 * 1024 ** 3,
+            "memory_limit_bytes": 8 * 1024**3,
+            "total_memory_bytes": 32 * 1024**3,
         }
 
     def test_spatial_domain_locks_temporal(self, dataset_info_3d, cluster_info):
@@ -1178,6 +1182,7 @@ class TestChunkDomain:
 # chunk_domain on the public recommend_chunks API
 # ---------------------------------------------------------------------------
 
+
 class TestRecommendChunksWithDomain:
     """Integration tests for chunk_domain via the public recommend_chunks()."""
 
@@ -1185,14 +1190,18 @@ class TestRecommendChunksWithDomain:
         """recommend_chunks(chunk_domain='spatial') locks time to -1."""
         import numpy as np
         import xarray as xr
+
         from dask_setup.xarray import recommend_chunks
 
         rng = np.random.default_rng(seed=0)
         data = rng.random((100, 36, 72)).astype("float32")
         ds = xr.Dataset(
             {"temp": (["time", "lat", "lon"], data)},
-            coords={"time": np.arange(100), "lat": np.linspace(-90, 90, 36),
-                    "lon": np.linspace(-180, 180, 72)},
+            coords={
+                "time": np.arange(100),
+                "lat": np.linspace(-90, 90, 36),
+                "lon": np.linspace(-180, 180, 72),
+            },
         )
 
         chunks = recommend_chunks(ds, chunk_domain="spatial")
@@ -1206,14 +1215,18 @@ class TestRecommendChunksWithDomain:
         """recommend_chunks(chunk_domain='temporal') locks lat/lon to -1."""
         import numpy as np
         import xarray as xr
+
         from dask_setup.xarray import recommend_chunks
 
         rng = np.random.default_rng(seed=1)
         data = rng.random((500, 36, 72)).astype("float32")
         ds = xr.Dataset(
             {"temp": (["time", "lat", "lon"], data)},
-            coords={"time": np.arange(500), "lat": np.linspace(-90, 90, 36),
-                    "lon": np.linspace(-180, 180, 72)},
+            coords={
+                "time": np.arange(500),
+                "lat": np.linspace(-90, 90, 36),
+                "lon": np.linspace(-180, 180, 72),
+            },
         )
 
         chunks = recommend_chunks(ds, chunk_domain="temporal")
@@ -1227,6 +1240,7 @@ class TestRecommendChunksWithDomain:
         """Invalid chunk_domain raises ValueError from recommend_chunks."""
         import numpy as np
         import xarray as xr
+
         from dask_setup.xarray import recommend_chunks
 
         data = np.zeros((10, 5, 5), dtype="float32")
@@ -1237,10 +1251,13 @@ class TestRecommendChunksWithDomain:
 
     def test_verbose_report_shows_domain(self):
         """verbose=True includes chunk_domain info in the printed report."""
+        import io
+        import sys
+
         import numpy as np
         import xarray as xr
+
         from dask_setup.xarray import recommend_chunks
-        import io, sys
 
         data = np.zeros((200, 36, 72), dtype="float32")
         ds = xr.Dataset({"temp": (["time", "lat", "lon"], data)})
@@ -1270,6 +1287,7 @@ class TestValidateChunks:
         """
         import numpy as np
         import xarray as xr
+
         from dask_setup.xarray import recommend_chunks, validate_chunks
 
         # ERA5-style 4-D dataset
@@ -1282,7 +1300,7 @@ class TestValidateChunks:
         # Must return no warnings — recommended chunks should be safe
         warnings_list = validate_chunks(ds_chunked)
         assert warnings_list == [], (
-            f"validate_chunks raised false OOM warnings after recommend_chunks:\n"
+            "validate_chunks raised false OOM warnings after recommend_chunks:\n"
             + "\n".join(warnings_list)
         )
 
@@ -1291,6 +1309,7 @@ class TestValidateChunks:
         """validate_chunks must compute chunk footprint from chunk sizes, not full dim sizes."""
         import numpy as np
         import xarray as xr
+
         from dask_setup.xarray import validate_chunks
 
         # Small dataset — full extents are large, but chunks are tiny
@@ -1310,10 +1329,12 @@ class TestValidateChunks:
     @pytest.mark.unit
     def test_genuinely_large_chunks_still_warn(self):
         """validate_chunks must still warn when chunks genuinely exceed worker memory."""
+        from unittest.mock import patch
+
         import numpy as np
         import xarray as xr
+
         from dask_setup.xarray import validate_chunks
-        from unittest.mock import patch
 
         data = np.zeros((10, 5), dtype="float32")
         ds = xr.Dataset({"v": (["x", "y"], data)})
@@ -1338,10 +1359,12 @@ class TestValidateChunks:
     @pytest.mark.unit
     def test_unchunked_dims_fall_back_to_full_extent(self):
         """For dims without a chunk spec, validate_chunks should use the full dim length."""
+        from unittest.mock import patch
+
         import numpy as np
         import xarray as xr
+
         from dask_setup.xarray import validate_chunks
-        from unittest.mock import patch
 
         data = np.zeros((100, 200), dtype="float32")
         ds = xr.Dataset({"v": (["x", "y"], data)})

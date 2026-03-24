@@ -672,8 +672,8 @@ def _parse_slurm_nodelist(nodelist: str, cpus_per_node: int = 1) -> dict[str, in
     import subprocess
 
     try:
-        result = subprocess.run(
-            ["scontrol", "show", "hostnames", nodelist],
+        result = subprocess.run(  # noqa: S603
+            ["scontrol", "show", "hostnames", nodelist],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=5,
@@ -683,7 +683,7 @@ def _parse_slurm_nodelist(nodelist: str, cpus_per_node: int = 1) -> dict[str, in
         # Fallback: treat as comma-separated (works for simple cases)
         hosts = [h.strip() for h in nodelist.split(",") if h.strip()]
 
-    return {h: cpus_per_node for h in hosts}
+    return dict.fromkeys(hosts, cpus_per_node)
 
 
 def setup_interactive_cluster(
@@ -795,6 +795,7 @@ def setup_interactive_cluster(
             _tpw = min(16, max(4, cores_per_node))
         elif resolved_wl == "mixed":
             import math
+
             _wpn = max(1, math.ceil(cores_per_node / 2))
             _tpw = 2
         else:  # cpu / auto
@@ -802,7 +803,9 @@ def setup_interactive_cluster(
             _tpw = 1
     else:
         _wpn = workers_per_node
-        _tpw = threads_per_worker if threads_per_worker is not None else max(1, cores_per_node // _wpn)
+        _tpw = (
+            threads_per_worker if threads_per_worker is not None else max(1, cores_per_node // _wpn)
+        )
 
     if threads_per_worker is not None:
         _tpw = threads_per_worker
@@ -826,7 +829,8 @@ def setup_interactive_cluster(
 
     if wait_for_workers:
         _wait_for_workers(
-            client, cluster,
+            client,
+            cluster,
             n_jobs=len(unique_nodes),
             workers_per_job=_wpn,
             timeout=worker_timeout,

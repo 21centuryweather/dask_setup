@@ -407,7 +407,7 @@ class ZarrV3Optimizer(IOOptimizer):
                                 break
                         if obj is not None and getattr(obj, "zarr_format", 0) == 3:
                             return True
-                    except Exception:
+                    except Exception:  # noqa: S110
                         pass
 
             # If zarr is installed and is v3, prefer ZarrV3Optimizer
@@ -419,7 +419,7 @@ class ZarrV3Optimizer(IOOptimizer):
                     src = ds.encoding.get("source", "")
                     if ".zarr" in src:
                         return True
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
         return False
@@ -747,10 +747,7 @@ class KerchunkOptimizer(IOOptimizer):
                 return True
 
         # Dataset-only detection (no path required)
-        if ds is not None and self._has_reference_store(ds):
-            return True
-
-        return False
+        return ds is not None and self._has_reference_store(ds)
 
     @staticmethod
     def _has_reference_store(ds: Any) -> bool:
@@ -798,7 +795,7 @@ class KerchunkOptimizer(IOOptimizer):
             enc = ds.encoding["chunks"]
             if isinstance(enc, dict):
                 return dict(enc)
-            if hasattr(ds, "dims") and isinstance(enc, (list, tuple)):
+            if hasattr(ds, "dims") and isinstance(enc, list | tuple):
                 return dict(zip(ds.dims, enc, strict=False))
 
         # Fall back to the first data variable's encoding
@@ -808,7 +805,7 @@ class KerchunkOptimizer(IOOptimizer):
                     enc = var.encoding["chunks"]
                     if isinstance(enc, dict):
                         return dict(enc)
-                    if hasattr(var, "dims") and isinstance(enc, (list, tuple)):
+                    if hasattr(var, "dims") and isinstance(enc, list | tuple):
                         return dict(zip(var.dims, enc, strict=False))
 
         # Cannot determine — return empty; caller should use existing chunking
@@ -1016,38 +1013,42 @@ def recommend_io_chunks(
 
     # Build format-specific extras
     extra: dict[str, Any] = {}
-    if detected_format == "zarr_v3" and isinstance(optimizer, ZarrV3Optimizer):
-        # Check whether sharding is worthwhile (chunk size exceeds threshold)
-        if chunk_mb >= optimizer._SHARD_THRESHOLD_MB and chunks:
-            # Inner chunks: target ~4 MB; outer = chunks (already computed)
-            if hasattr(ds, "sizes"):
-                dims_for_shard = dict(ds.sizes)
-            elif xr is not None and isinstance(ds, xr.DataArray):
-                dims_for_shard = dict(zip(ds.dims, ds.shape, strict=False))
-            else:
-                dims_for_shard = {}
-            if dims_for_shard:
-                inner: dict[str, int] = {}
-                inner_target = int(optimizer._INNER_CHUNK_MB * 1024 * 1024)
-                dtype_size_extra = 8  # conservative estimate
-                if np is not None:
-                    try:
-                        dtype_extra = (
-                            ds.dtype
-                            if hasattr(ds, "dtype")
-                            else next(iter(ds.data_vars.values())).dtype
-                        )
-                        dtype_size_extra = np.dtype(dtype_extra).itemsize
-                    except Exception:
-                        pass
-                wc = {d: chunks.get(d, dims_for_shard[d]) for d in dims_for_shard}
-                while dtype_size_extra * int(np.prod(list(wc.values()))) > inner_target:
-                    largest = max(wc, key=lambda d: wc[d])
-                    wc[largest] = max(1, wc[largest] // 2)
-                    if all(v == 1 for v in wc.values()):
-                        break
-                inner = dict(wc)
-                extra["sharding"] = optimizer._sharding_config(dims_for_shard, inner)
+    if (
+        detected_format == "zarr_v3"
+        and isinstance(optimizer, ZarrV3Optimizer)
+        and chunk_mb >= optimizer._SHARD_THRESHOLD_MB
+        and chunks
+    ):
+        # Sharding is worthwhile — chunk size exceeds threshold
+        # Inner chunks: target ~4 MB; outer = chunks (already computed)
+        if hasattr(ds, "sizes"):
+            dims_for_shard = dict(ds.sizes)
+        elif xr is not None and isinstance(ds, xr.DataArray):
+            dims_for_shard = dict(zip(ds.dims, ds.shape, strict=False))
+        else:
+            dims_for_shard = {}
+        if dims_for_shard:
+            inner: dict[str, int] = {}
+            inner_target = int(optimizer._INNER_CHUNK_MB * 1024 * 1024)
+            dtype_size_extra = 8  # conservative estimate
+            if np is not None:
+                try:
+                    dtype_extra = (
+                        ds.dtype
+                        if hasattr(ds, "dtype")
+                        else next(iter(ds.data_vars.values())).dtype
+                    )
+                    dtype_size_extra = np.dtype(dtype_extra).itemsize
+                except Exception:  # noqa: S110
+                    pass
+            wc = {d: chunks.get(d, dims_for_shard[d]) for d in dims_for_shard}
+            while dtype_size_extra * int(np.prod(list(wc.values()))) > inner_target:
+                largest = max(wc, key=lambda d: wc[d])
+                wc[largest] = max(1, wc[largest] // 2)
+                if all(v == 1 for v in wc.values()):
+                    break
+            inner = dict(wc)
+            extra["sharding"] = optimizer._sharding_config(dims_for_shard, inner)
 
     # Create recommendation
     recommendation = IORecommendation(

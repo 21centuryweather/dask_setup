@@ -188,14 +188,13 @@ def recommend_parquet_chunks(
                     worker_cap_mb = (min_worker_mem_bytes * 0.10) / (1024 * 1024)
                     if worker_cap_mb < max_partition_mb:
                         max_partition_mb = worker_cap_mb
-        except Exception:
+        except Exception:  # noqa: S110
             pass  # Non-fatal — proceed with defaults
 
     # ------------------------------------------------------------------
     # Compute rows per partition
     # ------------------------------------------------------------------
     target_max_bytes = int(max_partition_mb * 1024 * 1024)
-    target_min_bytes = int(target_partition_mb[0] * 1024 * 1024)
 
     if bytes_per_row <= 0:
         bytes_per_row = _FALLBACK_ROW_BYTES
@@ -264,7 +263,7 @@ def _estimate_bytes_per_row(df: Any, warnings_list: list[str]) -> int:
             if nrows > 0:
                 total_bytes = int(mem.sum())
                 return max(1, total_bytes // nrows)
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     # Fallback: sum dtype itemsizes across columns
@@ -286,7 +285,7 @@ def _estimate_bytes_per_row(df: Any, warnings_list: list[str]) -> int:
                 )
             if total > 0:
                 return total
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     return _FALLBACK_ROW_BYTES

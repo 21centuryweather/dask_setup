@@ -336,7 +336,7 @@ class TestGenerateAutoChunks:
 
         dims = {"lat": 720, "lon": 1440, "lev": 30}
         for spec in _generate_auto_chunks(dims):
-            for dim, size in spec.items():
+            for _dim, size in spec.items():
                 assert isinstance(size, int)
                 assert size > 0
 
@@ -345,8 +345,8 @@ class TestGenerateAutoChunks:
 
         dims = {"x": 50, "y": 50}
         for spec in _generate_auto_chunks(dims):
-            for dim, size in spec.items():
-                assert size <= dims[dim]
+            for _dim, size in spec.items():
+                assert size <= dims[_dim]
 
 
 # ---------------------------------------------------------------------------

@@ -455,11 +455,11 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
         import urllib.request
 
         try:
-            req = urllib.request.Request(
+            req = urllib.request.Request(  # noqa: S310
                 url,
                 headers={"User-Agent": f"dask_setup/{PROFILE_FORMAT_VERSION}"},
             )
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310
                 content = response.read().decode("utf-8")
         except urllib.error.URLError as e:
             raise InvalidConfigurationError(f"Could not fetch profile from {url!r}: {e}") from e

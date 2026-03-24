@@ -195,7 +195,7 @@ def tune_memory_thresholds(
             spill_val = metrics.get("spilled_memory") or metrics.get("spill")
             if isinstance(spill_val, dict):
                 total_spill_bytes += spill_val.get("disk", 0) or 0
-            elif isinstance(spill_val, (int, float)):
+            elif isinstance(spill_val, int | float):
                 total_spill_bytes += int(spill_val)
         spill_gib = total_spill_bytes / (1024**3)
     except Exception as e:

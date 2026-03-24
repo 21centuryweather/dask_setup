@@ -209,7 +209,7 @@ def cluster_report(
             if isinstance(spill_val, dict):
                 # Newer format: {"disk": bytes, "memory": bytes}
                 total_spill_bytes += spill_val.get("disk", 0) or 0
-            elif isinstance(spill_val, (int, float)):
+            elif isinstance(spill_val, int | float):
                 total_spill_bytes += int(spill_val)
 
         report.total_spill_gib = total_spill_bytes / (1024**3)

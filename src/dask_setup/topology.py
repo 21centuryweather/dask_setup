@@ -32,7 +32,7 @@ def _count_gpus() -> int:
         import cupy  # type: ignore[import-untyped]
 
         return cupy.cuda.runtime.getDeviceCount()
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     return 0

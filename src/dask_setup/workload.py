@@ -179,7 +179,7 @@ def infer_workload_type(ds: Any | None = None) -> str:
             # alone cannot overwhelm the dtype signal.
             cpu_score += min(8, len(cpu_dim_hits) * 2)
             logger.debug("CPU-signal dimensions detected", dims=sorted(cpu_dim_hits))
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     # ------------------------------------------------------------------
@@ -206,7 +206,7 @@ def infer_workload_type(ds: Any | None = None) -> str:
                         cpu_score += 2
                 elif dtype_str in _INT_OR_BYTE_DTYPES:
                     int_count += 1
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
         total = float_count + int_count
@@ -227,7 +227,7 @@ def infer_workload_type(ds: Any | None = None) -> str:
                     total_vars=total,
                 )
 
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     # ------------------------------------------------------------------
@@ -246,7 +246,7 @@ def infer_workload_type(ds: Any | None = None) -> str:
             elif bpv < _1_mib:
                 # Many tiny variables → I/O pattern (lots of small reads)
                 io_score += 1
-    except Exception:
+    except Exception:  # noqa: S110
         pass
 
     # ------------------------------------------------------------------

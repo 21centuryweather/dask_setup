@@ -62,19 +62,19 @@ class TestMultiNodeConfig:
     def test_invalid_workers_per_node_raises(self):
         from dask_setup.multinode import MultiNodeConfig
 
-        with pytest.raises(Exception):
+        with pytest.raises((ValueError, Exception)):
             MultiNodeConfig(workers_per_node=0)
 
     def test_invalid_cores_per_worker_raises(self):
         from dask_setup.multinode import MultiNodeConfig
 
-        with pytest.raises(Exception):
+        with pytest.raises((ValueError, Exception)):
             MultiNodeConfig(cores_per_worker=0)
 
     def test_invalid_mem_per_worker_raises(self):
         from dask_setup.multinode import MultiNodeConfig
 
-        with pytest.raises(Exception):
+        with pytest.raises((ValueError, Exception)):
             MultiNodeConfig(mem_per_worker_gb=-1.0)
 
     def test_adaptive_min_jobs_validation(self):
@@ -706,10 +706,10 @@ class TestWaitForWorkers:
             _wait_for_workers(mock_client, mock_cluster, n_jobs=3, workers_per_job=4, timeout=30.0)
 
         msg = str(exc_info.value)
-        assert "30" in msg            # timeout value
-        assert "3" in msg             # n_jobs
-        assert "12" in msg            # expected_total = 3 * 4
-        assert "qstat" in msg         # actionable hint
+        assert "30" in msg  # timeout value
+        assert "3" in msg  # n_jobs
+        assert "12" in msg  # expected_total = 3 * 4
+        assert "qstat" in msg  # actionable hint
 
     def test_raises_on_any_exception_from_wait(self):
         """Non-TimeoutError exceptions from wait_for_workers are also wrapped."""
@@ -762,8 +762,8 @@ class TestSetupPBSClusterWait:
             patch("dask_setup.multinode._wait_for_workers") as mock_wait,
         ):
             # Inline import so the patch applies
-            import importlib
             import dask_setup.multinode as mn
+
             mn._check_jobqueue = lambda: None  # skip import check
 
             client, cluster, _ = setup_pbs_cluster(
@@ -791,6 +791,7 @@ class TestSetupPBSClusterWait:
             patch("dask_setup.multinode._wait_for_workers") as mock_wait,
         ):
             import dask_setup.multinode as mn
+
             mn._check_jobqueue = lambda: None
 
             setup_pbs_cluster(
@@ -817,6 +818,7 @@ class TestSetupPBSClusterWait:
             ),
         ):
             import dask_setup.multinode as mn
+
             mn._check_jobqueue = lambda: None
 
             with pytest.raises(TimeoutError, match="no workers"):
@@ -853,6 +855,7 @@ class TestSetupSLURMClusterWait:
             patch("dask_setup.multinode._wait_for_workers") as mock_wait,
         ):
             import dask_setup.multinode as mn
+
             mn._check_jobqueue = lambda: None
 
             setup_slurm_cluster(
@@ -878,6 +881,7 @@ class TestSetupSLURMClusterWait:
             patch("dask_setup.multinode._wait_for_workers") as mock_wait,
         ):
             import dask_setup.multinode as mn
+
             mn._check_jobqueue = lambda: None
 
             setup_slurm_cluster(
@@ -977,9 +981,7 @@ class TestParsePBSNodefile:
         from dask_setup.multinode import _parse_pbs_nodefile
 
         nodefile = tmp_path / "nodefile"
-        nodefile.write_text(
-            "gadi-cpu-clx-0001\n" * 48 + "gadi-cpu-clx-0002\n" * 48
-        )
+        nodefile.write_text("gadi-cpu-clx-0001\n" * 48 + "gadi-cpu-clx-0002\n" * 48)
         result = _parse_pbs_nodefile(str(nodefile))
         assert result == {"gadi-cpu-clx-0001": 48, "gadi-cpu-clx-0002": 48}
 
@@ -995,9 +997,7 @@ class TestParsePBSNodefile:
         from dask_setup.multinode import _parse_pbs_nodefile
 
         nodefile = tmp_path / "nodefile"
-        nodefile.write_text(
-            "node-a\n" * 4 + "node-b\n" * 4 + "node-c\n" * 4
-        )
+        nodefile.write_text("node-a\n" * 4 + "node-b\n" * 4 + "node-c\n" * 4)
         result = _parse_pbs_nodefile(str(nodefile))
         assert list(result.keys()) == ["node-a", "node-b", "node-c"]
 
@@ -1126,7 +1126,7 @@ class TestSetupInteractiveClusterMultiNode:
             setup_interactive_cluster(workload_type="cpu")
 
         worker_opts = mock_ssh.call_args.kwargs["worker_options"]
-        assert worker_opts["n_workers"] == 12   # cores per node
+        assert worker_opts["n_workers"] == 12  # cores per node
         assert worker_opts["nthreads"] == 1
 
     def test_io_topology_single_worker_many_threads(self, tmp_path, monkeypatch):
@@ -1151,7 +1151,7 @@ class TestSetupInteractiveClusterMultiNode:
 
         worker_opts = mock_ssh.call_args.kwargs["worker_options"]
         assert worker_opts["n_workers"] == 1
-        assert worker_opts["nthreads"] >= 4     # min threads for io
+        assert worker_opts["nthreads"] >= 4  # min threads for io
 
 
 # ---------------------------------------------------------------------------

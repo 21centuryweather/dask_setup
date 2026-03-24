@@ -39,6 +39,7 @@ Example::
 
 from __future__ import annotations
 
+import contextlib
 import statistics
 import time
 from collections.abc import Callable, Sequence
@@ -476,10 +477,8 @@ def _measure_one(
         errors.append(f"Task count failed: {e}")
 
     # Worker count
-    try:
+    with contextlib.suppress(Exception):
         n_workers = len(client.scheduler_info().get("workers", {}))
-    except Exception:
-        pass
 
     # Optional warmup
     if warmup:
@@ -644,15 +643,11 @@ def benchmark_config(
             )
         finally:
             if client is not None:
-                try:
+                with contextlib.suppress(Exception):
                     client.close()
-                except Exception:
-                    pass
             if cluster is not None:
-                try:
+                with contextlib.suppress(Exception):
                     cluster.close()
-                except Exception:
-                    pass
 
         if result is None:
             result = BenchmarkResult(name=name, wall_time_seconds=float("nan"), errors=errors)
@@ -765,15 +760,11 @@ def scaling_analysis(
             )
         finally:
             if client is not None:
-                try:
+                with contextlib.suppress(Exception):
                     client.close()
-                except Exception:
-                    pass
             if cluster is not None:
-                try:
+                with contextlib.suppress(Exception):
                     cluster.close()
-                except Exception:
-                    pass
 
         raw_results.append(result)
 
@@ -805,12 +796,10 @@ def scaling_analysis(
     if plot:
         fig = scaling.plot()
         if fig is not None:
-            try:
+            with contextlib.suppress(Exception):
                 import matplotlib.pyplot as plt
 
                 plt.show()
-            except Exception:
-                pass
 
     return scaling
 
@@ -882,10 +871,9 @@ def chunk_impact(
 
     # Generate chunk size sweep if not provided
     if chunk_sizes is None:
-        if auto_chunks and dims:
-            chunk_sizes = _generate_auto_chunks(dims)
-        else:
-            chunk_sizes = [{}]  # single run with no rechunking
+        chunk_sizes = (
+            _generate_auto_chunks(dims) if auto_chunks and dims else [{}]
+        )  # single run with no rechunking
 
     raw_results: list[BenchmarkResult] = []
 
@@ -935,12 +923,10 @@ def chunk_impact(
         first_dim = next(iter(dims), None)
         fig = impact.plot(dim=first_dim)
         if fig is not None:
-            try:
+            with contextlib.suppress(Exception):
                 import matplotlib.pyplot as plt
 
                 plt.show()
-            except Exception:
-                pass
 
     return impact
 
@@ -1081,8 +1067,8 @@ def run_synthetic_benchmark(
     if verbose:
         print(f"Creating synthetic array {shape} chunked {chunks} …")
 
-    np.random.seed(42)
-    arr = da.from_array(np.random.rand(*shape).astype(np.float32), chunks=chunks)
+    rng = np.random.default_rng(42)
+    arr = da.from_array(rng.random(shape).astype(np.float32), chunks=chunks)
 
     # Resolve dask operation
     da_ops: dict[str, Callable[[Any], Any]] = {
@@ -1147,15 +1133,11 @@ def run_synthetic_benchmark(
         errors.append(f"Cluster error: {e}")
     finally:
         if client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 client.close()
-            except Exception:
-                pass
         if cluster_obj is not None:
-            try:
+            with contextlib.suppress(Exception):
                 cluster_obj.close()
-            except Exception:
-                pass
 
     valid_times = [t for t in times if t != float("inf")]
     wall = statistics.mean(valid_times) if valid_times else float("nan")
