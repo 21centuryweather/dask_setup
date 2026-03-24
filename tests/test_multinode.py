@@ -888,3 +888,306 @@ class TestSetupSLURMClusterWait:
             )
 
         mock_wait.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# detect_cluster_mode — interactive detection
+# ---------------------------------------------------------------------------
+
+
+class TestDetectClusterModeInteractive:
+    """Tests for interactive PBS/SLURM detection in detect_cluster_mode()."""
+
+    def test_pbs_interactive_returns_interactive(self, monkeypatch):
+        """PBS_ENVIRONMENT=PBS_INTERACTIVE should return 'interactive'."""
+        from dask_setup.multinode import detect_cluster_mode
+
+        monkeypatch.setenv("PBS_JOBID", "12345.gadi-login-01")
+        monkeypatch.setenv("PBS_NODEFILE", "/var/spool/pbs/aux/12345")
+        monkeypatch.setenv("PBS_ENVIRONMENT", "PBS_INTERACTIVE")
+
+        assert detect_cluster_mode() == "interactive"
+
+    def test_pbs_batch_returns_pbs(self, monkeypatch):
+        """PBS_ENVIRONMENT=PBS_BATCH should still return 'pbs'."""
+        from dask_setup.multinode import detect_cluster_mode
+
+        monkeypatch.setenv("PBS_JOBID", "12345.gadi-login-01")
+        monkeypatch.setenv("PBS_NODEFILE", "/var/spool/pbs/aux/12345")
+        monkeypatch.setenv("PBS_ENVIRONMENT", "PBS_BATCH")
+
+        assert detect_cluster_mode() == "pbs"
+
+    def test_pbs_no_environment_var_returns_pbs(self, monkeypatch):
+        """PBS_JOBID set but PBS_ENVIRONMENT absent → treat as batch → 'pbs'."""
+        from dask_setup.multinode import detect_cluster_mode
+
+        monkeypatch.setenv("PBS_JOBID", "12345.gadi-login-01")
+        monkeypatch.delenv("PBS_ENVIRONMENT", raising=False)
+
+        assert detect_cluster_mode() == "pbs"
+
+    def test_slurm_interactive_no_batch_flag(self, monkeypatch):
+        """SLURM_JOB_ID set without SLURM_BATCH_FLAG=1 → 'interactive'."""
+        from dask_setup.multinode import detect_cluster_mode
+
+        monkeypatch.setenv("SLURM_JOB_ID", "9876")
+        monkeypatch.setenv("SLURM_NODELIST", "gpu-node-01")
+        monkeypatch.delenv("SLURM_BATCH_FLAG", raising=False)
+        # PBS env must be absent for SLURM path to be reached
+        monkeypatch.delenv("PBS_JOBID", raising=False)
+        monkeypatch.delenv("PBS_NODEFILE", raising=False)
+        monkeypatch.delenv("PBS_ENVIRONMENT", raising=False)
+
+        assert detect_cluster_mode() == "interactive"
+
+    def test_slurm_batch_returns_slurm(self, monkeypatch):
+        """SLURM_BATCH_FLAG=1 → batch → 'slurm'."""
+        from dask_setup.multinode import detect_cluster_mode
+
+        monkeypatch.setenv("SLURM_JOB_ID", "9876")
+        monkeypatch.setenv("SLURM_NODELIST", "gpu-node-01")
+        monkeypatch.setenv("SLURM_BATCH_FLAG", "1")
+        monkeypatch.delenv("PBS_JOBID", raising=False)
+        monkeypatch.delenv("PBS_NODEFILE", raising=False)
+        monkeypatch.delenv("PBS_ENVIRONMENT", raising=False)
+
+        assert detect_cluster_mode() == "slurm"
+
+
+# ---------------------------------------------------------------------------
+# _parse_pbs_nodefile
+# ---------------------------------------------------------------------------
+
+
+class TestParsePBSNodefile:
+    """Tests for the PBS_NODEFILE parser."""
+
+    def test_single_node(self, tmp_path):
+        """Single node repeated N times → {node: N}."""
+        from dask_setup.multinode import _parse_pbs_nodefile
+
+        nodefile = tmp_path / "nodefile"
+        nodefile.write_text("gadi-cpu-clx-0001\n" * 48)
+        result = _parse_pbs_nodefile(str(nodefile))
+        assert result == {"gadi-cpu-clx-0001": 48}
+
+    def test_two_nodes_equal_cores(self, tmp_path):
+        """Two nodes with equal core counts."""
+        from dask_setup.multinode import _parse_pbs_nodefile
+
+        nodefile = tmp_path / "nodefile"
+        nodefile.write_text(
+            "gadi-cpu-clx-0001\n" * 48 + "gadi-cpu-clx-0002\n" * 48
+        )
+        result = _parse_pbs_nodefile(str(nodefile))
+        assert result == {"gadi-cpu-clx-0001": 48, "gadi-cpu-clx-0002": 48}
+
+    def test_nonexistent_file_returns_empty(self):
+        """Non-existent nodefile returns an empty dict without raising."""
+        from dask_setup.multinode import _parse_pbs_nodefile
+
+        result = _parse_pbs_nodefile("/nonexistent/path/nodefile")
+        assert result == {}
+
+    def test_preserves_insertion_order(self, tmp_path):
+        """First node in the file is first key in the dict."""
+        from dask_setup.multinode import _parse_pbs_nodefile
+
+        nodefile = tmp_path / "nodefile"
+        nodefile.write_text(
+            "node-a\n" * 4 + "node-b\n" * 4 + "node-c\n" * 4
+        )
+        result = _parse_pbs_nodefile(str(nodefile))
+        assert list(result.keys()) == ["node-a", "node-b", "node-c"]
+
+
+# ---------------------------------------------------------------------------
+# setup_interactive_cluster — single-node path
+# ---------------------------------------------------------------------------
+
+
+class TestSetupInteractiveClusterSingleNode:
+    """Single-node interactive cluster uses LocalCluster."""
+
+    def test_single_node_uses_local_cluster(self, tmp_path, monkeypatch):
+        """With one unique node in PBS_NODEFILE, a LocalCluster is created."""
+        from dask_setup.multinode import setup_interactive_cluster
+
+        nodefile = tmp_path / "nodefile"
+        nodefile.write_text("gadi-node-01\n" * 16)
+        monkeypatch.setenv("PBS_NODEFILE", str(nodefile))
+
+        mock_client = MagicMock()
+        mock_client.scheduler_info.return_value = {"workers": {"w1": {}}}
+        mock_cluster = MagicMock()
+
+        with (
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask_setup.multinode.create_cluster", return_value=mock_cluster),
+            patch("dask_setup.multinode.detect_resources", return_value={}),
+            patch("dask_setup.multinode.decide_topology") as mock_topo,
+            patch("dask_setup.multinode.configure_dask_settings"),
+            patch("dask_setup.multinode.create_dask_temp_dir", return_value=tmp_path),
+            patch("dask_setup.multinode._wait_for_workers"),
+        ):
+            from dask_setup.config import DaskSetupConfig
+            mock_topo.return_value = MagicMock(n_workers=16, spec=["n_workers"])
+
+            client, cluster, tmp = setup_interactive_cluster(workload_type="cpu")
+
+        assert client is mock_client
+        assert cluster is mock_cluster
+
+    def test_no_nodefile_falls_back_to_local(self, monkeypatch):
+        """No PBS_NODEFILE and no SLURM env → single-node LocalCluster path."""
+        from dask_setup.multinode import setup_interactive_cluster
+
+        monkeypatch.delenv("PBS_NODEFILE", raising=False)
+        monkeypatch.delenv("SLURM_NODELIST", raising=False)
+        monkeypatch.delenv("SLURM_JOB_NODELIST", raising=False)
+
+        mock_client = MagicMock()
+        mock_client.scheduler_info.return_value = {"workers": {"w1": {}}}
+        mock_cluster = MagicMock()
+
+        with (
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask_setup.multinode.create_cluster", return_value=mock_cluster),
+            patch("dask_setup.multinode.detect_resources", return_value={}),
+            patch("dask_setup.multinode.decide_topology", return_value=MagicMock(n_workers=4, spec=["n_workers"])),
+            patch("dask_setup.multinode.configure_dask_settings"),
+            patch("dask_setup.multinode.create_dask_temp_dir", return_value=Path("/tmp/dask")),
+            patch("dask_setup.multinode._wait_for_workers"),
+        ):
+            client, cluster, tmp = setup_interactive_cluster()
+
+        assert client is mock_client
+
+
+# ---------------------------------------------------------------------------
+# setup_interactive_cluster — multi-node SSH path
+# ---------------------------------------------------------------------------
+
+
+class TestSetupInteractiveClusterMultiNode:
+    """Multi-node interactive cluster uses SSHCluster."""
+
+    def test_multi_node_uses_ssh_cluster(self, tmp_path, monkeypatch):
+        """Two unique nodes → SSHCluster."""
+        from dask_setup.multinode import setup_interactive_cluster
+
+        nodefile = tmp_path / "nodefile"
+        nodefile.write_text("node-01\n" * 48 + "node-02\n" * 48)
+        monkeypatch.setenv("PBS_NODEFILE", str(nodefile))
+
+        mock_ssh_cluster = MagicMock()
+        mock_ssh_cluster.scheduler_address = "tcp://node-01:8786"
+        mock_client = MagicMock()
+        mock_client.scheduler_info.return_value = {"workers": {"w1": {}}}
+
+        with (
+            patch("dask_setup.multinode.SSHCluster", return_value=mock_ssh_cluster) as mock_ssh,
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask_setup.multinode._wait_for_workers"),
+        ):
+            client, cluster, tmp = setup_interactive_cluster(workload_type="cpu")
+
+        mock_ssh.assert_called_once()
+        call_hosts = mock_ssh.call_args.args[0]
+        assert call_hosts == ["node-01", "node-02"]
+        assert client is mock_client
+
+    def test_cpu_topology_one_worker_per_core(self, tmp_path, monkeypatch):
+        """workload_type='cpu' → workers_per_node == cores_per_node."""
+        from dask_setup.multinode import setup_interactive_cluster
+
+        nodefile = tmp_path / "nodefile"
+        nodefile.write_text("node-a\n" * 12 + "node-b\n" * 12)
+        monkeypatch.setenv("PBS_NODEFILE", str(nodefile))
+
+        mock_ssh_cluster = MagicMock()
+        mock_ssh_cluster.scheduler_address = "tcp://node-a:8786"
+        mock_client = MagicMock()
+        mock_client.scheduler_info.return_value = {"workers": {}}
+
+        with (
+            patch("dask_setup.multinode.SSHCluster", return_value=mock_ssh_cluster) as mock_ssh,
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask_setup.multinode._wait_for_workers"),
+        ):
+            setup_interactive_cluster(workload_type="cpu")
+
+        worker_opts = mock_ssh.call_args.kwargs["worker_options"]
+        assert worker_opts["n_workers"] == 12   # cores per node
+        assert worker_opts["nthreads"] == 1
+
+    def test_io_topology_single_worker_many_threads(self, tmp_path, monkeypatch):
+        """workload_type='io' → 1 worker per node with many threads."""
+        from dask_setup.multinode import setup_interactive_cluster
+
+        nodefile = tmp_path / "nodefile"
+        nodefile.write_text("node-a\n" * 48 + "node-b\n" * 48)
+        monkeypatch.setenv("PBS_NODEFILE", str(nodefile))
+
+        mock_ssh_cluster = MagicMock()
+        mock_ssh_cluster.scheduler_address = "tcp://node-a:8786"
+        mock_client = MagicMock()
+        mock_client.scheduler_info.return_value = {"workers": {}}
+
+        with (
+            patch("dask_setup.multinode.SSHCluster", return_value=mock_ssh_cluster) as mock_ssh,
+            patch("dask_setup.multinode.Client", return_value=mock_client),
+            patch("dask_setup.multinode._wait_for_workers"),
+        ):
+            setup_interactive_cluster(workload_type="io")
+
+        worker_opts = mock_ssh.call_args.kwargs["worker_options"]
+        assert worker_opts["n_workers"] == 1
+        assert worker_opts["nthreads"] >= 4     # min threads for io
+
+
+# ---------------------------------------------------------------------------
+# setup_dask_client — interactive mode dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestSetupDaskClientInteractiveDispatch:
+    """setup_dask_client(mode='interactive') should call setup_interactive_cluster."""
+
+    def test_explicit_interactive_mode(self):
+        """mode='interactive' always calls setup_interactive_cluster."""
+        mock_client = MagicMock()
+        mock_cluster = MagicMock()
+        mock_cluster.scheduler_address = "tcp://127.0.0.1:8786"
+
+        with patch(
+            "dask_setup.client.setup_interactive_cluster",
+            return_value=(mock_client, mock_cluster, "/tmp/dask"),
+        ) as mock_interactive:
+            from dask_setup.client import setup_dask_client
+
+            result = setup_dask_client(mode="interactive")
+
+        mock_interactive.assert_called_once()
+        assert result[0] is mock_client
+
+    def test_auto_mode_pbs_interactive_dispatches_correctly(self, monkeypatch):
+        """mode='auto' with PBS_ENVIRONMENT=PBS_INTERACTIVE → setup_interactive_cluster."""
+        monkeypatch.setenv("PBS_JOBID", "12345.gadi")
+        monkeypatch.setenv("PBS_NODEFILE", "/fake/nodefile")
+        monkeypatch.setenv("PBS_ENVIRONMENT", "PBS_INTERACTIVE")
+
+        mock_client = MagicMock()
+        mock_cluster = MagicMock()
+
+        with patch(
+            "dask_setup.client.setup_interactive_cluster",
+            return_value=(mock_client, mock_cluster, ""),
+        ) as mock_interactive:
+            from dask_setup.client import setup_dask_client
+
+            result = setup_dask_client(mode="auto")
+
+        mock_interactive.assert_called_once()
+        assert result[0] is mock_client

@@ -40,6 +40,7 @@ __all__ = [
     "MultiNodeConfig",
     "setup_pbs_cluster",
     "setup_slurm_cluster",
+    "setup_interactive_cluster",
     "detect_cluster_mode",
     "SharedTempDir",
 ]
@@ -276,17 +277,43 @@ _SLURM_INDICATORS = ("SLURM_JOB_ID", "SLURM_JOBID", "SLURM_NODELIST")
 def detect_cluster_mode() -> str:
     """Detect the appropriate cluster mode from the execution environment.
 
+    Distinguishes between *batch* jobs (where submitting child worker jobs via
+    dask-jobqueue is the right approach) and *interactive* jobs (where the
+    resources are already allocated and workers should be started directly).
+
+    PBS sets ``PBS_ENVIRONMENT=PBS_INTERACTIVE`` for interactive jobs (``qsub -I``).
+    SLURM sets ``SLURM_JOB_NAME=interactive`` or the job was submitted via
+    ``salloc`` (``SLURM_JOB_ID`` is set but ``SLURM_BATCH_FLAG`` is absent or ``0``).
+
     Returns
     -------
     str
-        One of ``"pbs"``, ``"slurm"``, or ``"local"``.
+        One of ``"pbs"``, ``"slurm"``, ``"interactive"``, or ``"local"``.
+
+        ``"interactive"`` is returned when inside a PBS interactive job
+        (``PBS_ENVIRONMENT=PBS_INTERACTIVE``) or a SLURM interactive allocation
+        (``salloc`` / ``SLURM_BATCH_FLAG`` not set).  In this mode,
+        :func:`setup_interactive_cluster` should be used instead of
+        :func:`setup_pbs_cluster` / :func:`setup_slurm_cluster`.
     """
-    if any(os.getenv(v) for v in _SLURM_INDICATORS):
-        logger.debug("Cluster mode detected: slurm")
-        return "slurm"
+    # --- PBS ---
     if any(os.getenv(v) for v in _PBS_INDICATORS):
+        if os.getenv("PBS_ENVIRONMENT") == "PBS_INTERACTIVE":
+            logger.debug("Cluster mode detected: interactive (PBS)")
+            return "interactive"
         logger.debug("Cluster mode detected: pbs")
         return "pbs"
+
+    # --- SLURM ---
+    if any(os.getenv(v) for v in _SLURM_INDICATORS):
+        # SLURM_BATCH_FLAG=1 in batch jobs, absent or 0 in interactive (salloc)
+        batch_flag = os.getenv("SLURM_BATCH_FLAG", "0")
+        if batch_flag != "1":
+            logger.debug("Cluster mode detected: interactive (SLURM)")
+            return "interactive"
+        logger.debug("Cluster mode detected: slurm")
+        return "slurm"
+
     logger.debug("Cluster mode detected: local")
     return "local"
 
@@ -612,6 +639,219 @@ def setup_slurm_cluster(
         _wait_for_workers(client, cluster, n_workers, cfg.workers_per_node, worker_timeout)
 
     return client, cluster, shared_tmp
+
+
+# ---------------------------------------------------------------------------
+# Interactive cluster — use already-allocated PBS/SLURM resources
+# ---------------------------------------------------------------------------
+
+
+def _parse_pbs_nodefile(nodefile: str) -> dict[str, int]:
+    """Return ``{hostname: core_count}`` from a ``PBS_NODEFILE``.
+
+    NCI Gadi (and most PBS systems) write one line *per CPU* in the nodefile,
+    so the same hostname appears ``ncpus`` times.  Deduplication gives the
+    unique nodes; the count gives cores per node.
+    """
+    from collections import Counter
+
+    try:
+        with open(nodefile) as f:
+            lines = [ln.strip() for ln in f if ln.strip()]
+        return dict(Counter(lines))
+    except OSError:
+        return {}
+
+
+def _parse_slurm_nodelist(nodelist: str, cpus_per_node: int = 1) -> dict[str, int]:
+    """Expand a SLURM compressed nodelist into ``{hostname: core_count}``.
+
+    Uses ``scontrol show hostnames`` when available; falls back to treating
+    *nodelist* as a comma-separated list of plain hostnames.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["scontrol", "show", "hostnames", nodelist],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        hosts = [h for h in result.stdout.splitlines() if h.strip()]
+    except Exception:
+        # Fallback: treat as comma-separated (works for simple cases)
+        hosts = [h.strip() for h in nodelist.split(",") if h.strip()]
+
+    return {h: cpus_per_node for h in hosts}
+
+
+def setup_interactive_cluster(
+    workload_type: str = "cpu",
+    workers_per_node: int | None = None,
+    threads_per_worker: int | None = None,
+    wait_for_workers: bool = True,
+    worker_timeout: float = 60.0,
+    scheduler_port: int = 8786,
+) -> tuple[Any, Any, str | None]:
+    """Set up a Dask cluster using resources already allocated in an interactive job.
+
+    This is the right function to call from a Jupyter notebook running inside a
+    ``qsub -I`` (PBS) or ``salloc`` (SLURM) interactive session.  Unlike
+    :func:`setup_pbs_cluster` / :func:`setup_slurm_cluster`, it does **not**
+    submit new batch jobs — it creates workers directly on the nodes that PBS or
+    SLURM has already assigned to the current session.
+
+    Behaviour
+    ---------
+    - **Single allocated node** — creates a ``LocalCluster`` using all cores and
+      memory available in the allocation (reads ``PBS_NCPUS`` / ``PBS_MEM`` or
+      SLURM equivalents via :func:`~dask_setup.resources.detect_resources`).
+    - **Multiple allocated nodes** — creates a ``dask.distributed.SSHCluster``
+      across all nodes listed in ``PBS_NODEFILE`` / ``$SLURM_NODELIST``.
+      Passwordless SSH between nodes is required (standard on most HPC systems).
+
+    Parameters
+    ----------
+    workload_type:
+        Worker topology — ``"cpu"``, ``"io"``, ``"mixed"``, or ``"auto"``.
+        Determines threads per worker and workers per node using the same
+        logic as single-node :func:`~dask_setup.client.setup_dask_client`.
+    workers_per_node:
+        Override the number of worker processes to start per node.  When
+        ``None`` (default), derived from *workload_type* and the core count.
+    threads_per_worker:
+        Override threads per worker process.  When ``None``, derived from
+        *workload_type*.
+    wait_for_workers:
+        Block until at least one worker has connected.  Defaults to ``True``.
+    worker_timeout:
+        Seconds to wait for workers.  Defaults to 60 s (workers start almost
+        immediately because no job submission is involved).
+    scheduler_port:
+        Port for the Dask scheduler (multi-node SSH path only).
+
+    Returns
+    -------
+    (client, cluster, tmp_path)
+        ``client`` — a connected ``dask.distributed.Client``.
+        ``cluster`` — ``LocalCluster`` or ``SSHCluster``.
+        ``tmp_path`` — path to the temporary directory, or ``""`` when not set.
+    """
+    from dask.distributed import Client
+
+    # --- Discover allocated nodes ------------------------------------------
+    node_cores: dict[str, int] = {}
+
+    nodefile = os.getenv("PBS_NODEFILE", "")
+    slurm_nodelist = os.getenv("SLURM_NODELIST") or os.getenv("SLURM_JOB_NODELIST", "")
+
+    if nodefile and Path(nodefile).exists():
+        node_cores = _parse_pbs_nodefile(nodefile)
+        logger.debug("PBS_NODEFILE parsed", nodes=list(node_cores.keys()))
+    elif slurm_nodelist:
+        # SLURM_CPUS_ON_NODE can be a comma-separated list (one per node)
+        cpus_str = os.getenv("SLURM_CPUS_ON_NODE", "1")
+        try:
+            cpus_per_node = int(cpus_str.split(",")[0])
+        except ValueError:
+            cpus_per_node = 1
+        node_cores = _parse_slurm_nodelist(slurm_nodelist, cpus_per_node)
+        logger.debug("SLURM nodelist parsed", nodes=list(node_cores.keys()))
+
+    unique_nodes = list(node_cores.keys())
+
+    # --- Single-node path (LocalCluster) ------------------------------------
+    if len(unique_nodes) <= 1:
+        logger.info(
+            "Interactive cluster: single node, using LocalCluster",
+            node=unique_nodes[0] if unique_nodes else "unknown",
+        )
+        from .resources import detect_resources
+        from .topology import decide_topology
+        from .cluster import create_cluster, configure_dask_settings
+        from .tempdir import create_dask_temp_dir
+
+        resources = detect_resources(fallback=True)
+        resolved_wl = workload_type
+        if workload_type == "auto":
+            try:
+                from .workload import infer_workload_type
+                resolved_wl = infer_workload_type(None, resources)
+            except Exception:
+                resolved_wl = "cpu"
+
+        from .config import DaskSetupConfig
+        cfg_obj = DaskSetupConfig(workload_type=resolved_wl)
+        topology = decide_topology(cfg_obj, resources)
+        configure_dask_settings(resources, topology)
+        dask_tmp = create_dask_temp_dir()
+        cluster = create_cluster(topology, resources, str(dask_tmp))
+        client = Client(cluster)
+        if wait_for_workers:
+            _wait_for_workers(
+                client, cluster,
+                n_jobs=1,
+                workers_per_job=topology.n_workers,
+                timeout=worker_timeout,
+            )
+        return client, cluster, str(dask_tmp)
+
+    # --- Multi-node path (SSHCluster) ---------------------------------------
+    logger.info(
+        "Interactive cluster: multi-node, using SSHCluster",
+        nodes=unique_nodes,
+    )
+    from dask.distributed import SSHCluster
+
+    # Compute topology for the SSH workers
+    cores_per_node = node_cores[unique_nodes[0]]
+    resolved_wl = workload_type if workload_type != "auto" else "cpu"
+
+    if workers_per_node is None:
+        if resolved_wl == "io":
+            _wpn = 1
+            _tpw = min(16, max(4, cores_per_node))
+        elif resolved_wl == "mixed":
+            import math
+            _wpn = max(1, math.ceil(cores_per_node / 2))
+            _tpw = 2
+        else:  # cpu / auto
+            _wpn = cores_per_node
+            _tpw = 1
+    else:
+        _wpn = workers_per_node
+        _tpw = threads_per_worker if threads_per_worker is not None else max(1, cores_per_node // _wpn)
+
+    if threads_per_worker is not None:
+        _tpw = threads_per_worker
+
+    logger.debug(
+        "SSHCluster topology",
+        workers_per_node=_wpn,
+        threads_per_worker=_tpw,
+        cores_per_node=cores_per_node,
+    )
+
+    cluster = SSHCluster(
+        unique_nodes,  # first host is the scheduler
+        connect_options={"known_hosts": None},
+        worker_options={"nthreads": _tpw, "n_workers": _wpn},
+        scheduler_options={"port": scheduler_port, "dashboard_address": ":8787"},
+    )
+
+    client = Client(cluster)
+    logger.debug("SSHCluster client connected", scheduler=str(cluster.scheduler_address))
+
+    if wait_for_workers:
+        _wait_for_workers(
+            client, cluster,
+            n_jobs=len(unique_nodes),
+            workers_per_job=_wpn,
+            timeout=worker_timeout,
+        )
+
+    return client, cluster, ""
 
 
 # ---------------------------------------------------------------------------

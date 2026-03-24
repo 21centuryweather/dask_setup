@@ -380,17 +380,27 @@ def setup_dask_client(
         and tightens the worker ``memory.target`` / ``memory.spill`` thresholds
         slightly, giving workers more head-room from the start.  Default
         ``False``.
-    mode : {"auto", "local", "pbs", "slurm"}
+    mode : {"auto", "local", "pbs", "slurm", "interactive"}
         Backend selection.
 
         - ``"local"`` — always use a single-node ``LocalCluster`` (default
           behaviour prior to v2.0).
-        - ``"pbs"`` — launch via ``dask-jobqueue.PBSCluster``.  Requires
-          ``pip install dask-jobqueue``.
-        - ``"slurm"`` — launch via ``dask-jobqueue.SLURMCluster``.
+        - ``"pbs"`` — launch via ``dask-jobqueue.PBSCluster`` (submits new
+          batch jobs).  Requires ``pip install dask-jobqueue``.
+        - ``"slurm"`` — launch via ``dask-jobqueue.SLURMCluster`` (submits
+          new batch jobs).
+        - ``"interactive"`` — use resources already allocated in the current
+          interactive PBS (``qsub -I``) or SLURM (``salloc``) session.
+          Single-node allocations create a ``LocalCluster``; multi-node
+          allocations create an ``SSHCluster`` across all nodes in
+          ``PBS_NODEFILE`` / ``SLURM_NODELIST``.
         - ``"auto"`` (default) — inspect the environment and choose
-          ``"pbs"`` if ``PBS_JOBID`` is set, ``"slurm"`` if
-          ``SLURM_JOB_ID`` is set, or ``"local"`` otherwise.
+          ``"interactive"`` when inside a PBS interactive job
+          (``PBS_ENVIRONMENT=PBS_INTERACTIVE``) or a SLURM interactive
+          allocation (``SLURM_BATCH_FLAG`` not set to ``"1"``);
+          ``"pbs"`` when ``PBS_JOBID`` is set in a batch job;
+          ``"slurm"`` when ``SLURM_JOB_ID`` is set in a batch job;
+          ``"local"`` otherwise.
     multi_node_config : MultiNodeConfig or None
         Configuration for the multi-node backend (``mode="pbs"`` or
         ``"slurm"``).  Ignored when ``mode="local"``.  When ``None`` and a
@@ -461,6 +471,15 @@ def setup_dask_client(
     if resolved_mode == "auto":
         resolved_mode = detect_cluster_mode()
         logger.debug("Mode auto-resolved", mode=resolved_mode)
+
+    if resolved_mode == "interactive":
+        from .multinode import setup_interactive_cluster
+
+        logger.info("Interactive cluster mode — using already-allocated nodes")
+        client, cluster, tmp_path = setup_interactive_cluster(
+            workload_type=workload_type,
+        )
+        return client, cluster, tmp_path  # type: ignore[return-value]
 
     if resolved_mode in {"pbs", "slurm"}:
         from .multinode import setup_pbs_cluster, setup_slurm_cluster

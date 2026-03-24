@@ -22,6 +22,7 @@ from .multinode import (
     detect_cluster_mode,
     generate_pbs_script,
     generate_slurm_script,
+    setup_interactive_cluster,
     setup_pbs_cluster,
     setup_slurm_cluster,
 )
@@ -326,6 +327,7 @@ __all__ = [
     "MultiNodeConfig",
     "SharedTempDir",
     "detect_cluster_mode",
+    "setup_interactive_cluster",
     "setup_pbs_cluster",
     "setup_slurm_cluster",
     "generate_pbs_script",
