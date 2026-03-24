@@ -732,15 +732,26 @@ def recommend_chunks(
             main_var = max(variables.values(), key=lambda v: v["size_bytes"])
             dtype_size = np.dtype(main_var["dtype"]).itemsize
 
-            # Check for very large existing chunks
+            # Check for very large existing chunks.
+            # Compute the actual chunk footprint by multiplying the chunk size
+            # for every dimension (not the full dim extent for other dims —
+            # that was a bug producing multi-thousand-MiB false estimates).
             for dim, chunk_sizes in current_chunking.items():
                 if isinstance(chunk_sizes, list | tuple) and chunk_sizes:
                     max_chunk_size = max(chunk_sizes)
-                    # Rough estimate of chunk memory usage
                     elements_in_chunk = max_chunk_size
                     for other_dim in main_var["dims"]:
-                        if other_dim != dim:
-                            elements_in_chunk *= dataset_info["dims"][other_dim]
+                        if other_dim == dim:
+                            continue
+                        other_chunk = current_chunking.get(other_dim)
+                        if other_chunk is None:
+                            elements_in_chunk *= dataset_info["dims"].get(other_dim, 1)
+                        elif isinstance(other_chunk, (list, tuple)) and other_chunk:
+                            elements_in_chunk *= max(other_chunk)
+                        elif isinstance(other_chunk, int):
+                            elements_in_chunk *= other_chunk
+                        else:
+                            elements_in_chunk *= dataset_info["dims"].get(other_dim, 1)
 
                     chunk_mb = (elements_in_chunk * dtype_size) / (1024 * 1024)
 
