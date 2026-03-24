@@ -70,7 +70,7 @@ def decide_topology(
         )
     if workload_type not in {"cpu", "io", "mixed", "gpu"}:
         raise InvalidConfigurationError(
-            f"workload_type must be 'cpu', 'io', 'mixed', or 'gpu', got '{workload_type}'"
+            f"workload_type must be 'cpu', 'io', or 'mixed', got '{workload_type}'"
         )
 
     # Validate total_cores

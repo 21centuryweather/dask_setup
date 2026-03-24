@@ -38,7 +38,20 @@ except ImportError:
 
 import psutil
 
-__all__ = ["recommend_chunks", "validate_chunks", "ChunkRecommendation"]
+__all__ = ["recommend_chunks", "validate_chunks", "ChunkRecommendation", "ChunkDict"]
+
+
+class ChunkDict(dict):
+    """A dict subclass for chunk specifications that also exposes a ``.chunks`` property.
+
+    This allows callers to use either ``chunks["time"]`` (dict-style) or
+    ``chunks.chunks`` (attribute-style, compatible with ChunkRecommendation) on
+    the value returned by :func:`recommend_chunks` when ``verbose=False``.
+    """
+
+    @property
+    def chunks(self) -> dict:
+        return dict(self)
 
 
 class XarrayDependencyError(ImportError):
@@ -502,13 +515,15 @@ def _calculate_optimal_chunks(
 
     # Assemble final recommendations.
     # Locked dims use -1 (xarray "one chunk = full dimension").
-    # Free dims are included only if they are actually being chunked.
+    # Free dims: always include them when chunk_domain was explicitly specified
+    # (so the caller can see which dims are being managed), otherwise only include
+    # dims where we are actually reducing chunk size below full dimension.
     for dim in main_var_dims:
         if dim in locked_dims:
             recommended_chunks[dim] = -1
         else:
             chunk_size = working_chunks[dim]
-            if chunk_size < dims[dim]:  # Only include if actually chunking
+            if chunk_domain is not None or chunk_size < dims[dim]:
                 recommended_chunks[dim] = chunk_size
 
     # Final chunk size estimate
@@ -791,8 +806,8 @@ def recommend_chunks(
         print(report)
         return recommendation
     else:
-        # Return simple chunk dict
-        return dict(recommendation.chunks)
+        # Return ChunkDict — a dict subclass that also supports .chunks attribute access
+        return ChunkDict(recommendation.chunks)
 
 
 def validate_chunks(
@@ -912,12 +927,19 @@ def validate_chunks(
             warnings.warn(msg, UserWarning, stacklevel=2)
 
         elif chunk_bytes < min_chunk_bytes:
-            msg = (
-                f"Dimension '{dim}': chunk is only {chunk_mb:.2f} MiB "
-                f"(below {min_chunk_mb:.0f} MiB minimum). "
-                "High task-graph overhead likely — consider larger chunks."
-            )
-            warning_messages.append(msg)
-            warnings.warn(msg, UserWarning, stacklevel=2)
+            # Only warn if the variable itself is large enough that the chunks
+            # *could* meaningfully be bigger. For tiny datasets (total size < min
+            # threshold), small chunks are unavoidable and warnings are noise.
+            import math as _math
+
+            full_var_bytes = dtype_size * _math.prod(dims.get(d, 1) for d in main_var_dims)
+            if full_var_bytes >= min_chunk_bytes:
+                msg = (
+                    f"Dimension '{dim}': chunk is only {chunk_mb:.2f} MiB "
+                    f"(below {min_chunk_mb:.0f} MiB minimum). "
+                    "High task-graph overhead likely — consider larger chunks."
+                )
+                warning_messages.append(msg)
+                warnings.warn(msg, UserWarning, stacklevel=2)
 
     return warning_messages

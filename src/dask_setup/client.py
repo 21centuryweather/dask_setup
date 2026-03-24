@@ -15,7 +15,13 @@ from .config_manager import ConfigManager
 from .dashboard import print_dashboard_info
 from .exceptions import InsufficientResourcesError
 from .logging import get_logger
-from .multinode import MultiNodeConfig, detect_cluster_mode
+from .multinode import (
+    MultiNodeConfig,
+    detect_cluster_mode,
+    setup_interactive_cluster,
+    setup_pbs_cluster,
+    setup_slurm_cluster,
+)
 from .resources import detect_resources
 from .tempdir import create_dask_temp_dir
 from .topology import decide_topology, validate_topology
@@ -48,13 +54,14 @@ def _compute_smart_reserve_default() -> float:
     """
     try:
         total_ram_gb = psutil.virtual_memory().total / (1024**3)
-        return min(50.0, max(4.0, total_ram_gb * 0.20))
+        smart_reserve = min(50.0, max(4.0, total_ram_gb * 0.20))
+        # Cap the smart reserve at 50.0 GiB as a safe HPC default
+        return min(50.0, smart_reserve)
     except Exception:
         return 50.0  # Safe HPC fallback if psutil is unexpectedly unavailable
 
 
 def _resolve_configuration(
-    config: DaskSetupConfig | None = None,
     profile: str | None = None,
     workload_type: str = "io",
     max_workers: int | None = None,
@@ -64,21 +71,16 @@ def _resolve_configuration(
     adaptive: bool = False,
     min_workers: int | None = None,
     suggest_chunks: bool = False,
-    fallback_on_detection_failure: bool = False,
-    adaptive_memory: bool = False,
 ) -> DaskSetupConfig:
-    """Resolve final configuration from a config object, profile, and explicit parameters.
+    """Resolve final configuration from a profile and explicit parameters.
 
     Priority order (highest to lowest):
 
     1. Explicit keyword parameters passed to ``setup_dask_client()``
-    2. Config object (``config=``) **or** profile (``profile=``)
+    2. Profile (``profile=``)
     3. Defaults — ``reserve_mem_gb`` uses a smart default (20 % RAM, 4–50 GiB)
 
-    ``config`` and ``profile`` are mutually exclusive.
-
     Args:
-        config: A pre-built DaskSetupConfig object to use as the base configuration.
         profile: Profile name to load from disk/builtins as the base configuration.
         workload_type: Workload type override.
         max_workers: Maximum workers cap.
@@ -96,28 +98,18 @@ def _resolve_configuration(
         The heuristic that detects "explicitly set" parameters compares each value
         against its default.  Edge case: if you deliberately pass a value equal to
         the default (e.g. ``dashboard=True``) it will be treated as "not set" and a
-        base_config value will take precedence.  Use ``config=DaskSetupConfig(...)``
-        to avoid this ambiguity entirely.
+        profile value will take precedence.
     """
-    if config is not None and profile is not None:
-        raise ValueError(
-            "Cannot specify both 'config' and 'profile'. "
-            "Pass a DaskSetupConfig object via 'config=' OR a profile name via 'profile=', not both."
-        )
+    # Build defaults - use provided reserve_mem_gb or fallback to smart default
+    defaults = DaskSetupConfig(
+        reserve_mem_gb=reserve_mem_gb if reserve_mem_gb is not None else 50.0
+    )
+    logger.debug("Configuration defaults set", reserve_mem_gb=defaults.reserve_mem_gb)
 
-    # Build defaults using the environment-aware smart reserve
-    smart_reserve = _compute_smart_reserve_default()
-    defaults = DaskSetupConfig(reserve_mem_gb=smart_reserve)
-    logger.debug("Smart reserve default computed", reserve_mem_gb=smart_reserve)
-
-    # Resolve the base configuration: either a provided config object or a loaded profile
+    # Resolve the base configuration: load profile if specified
     base_config = None
 
-    if config is not None:
-        # Caller supplied a ready-made DaskSetupConfig — use it as the profile-level base
-        base_config = config
-        logger.debug("Using caller-provided DaskSetupConfig as base")
-    elif profile is not None:
+    if profile is not None:
         manager = ConfigManager()
         profile_obj = manager.get_profile(profile)
         if profile_obj is None:
@@ -130,9 +122,7 @@ def _resolve_configuration(
     #
     # Note: This heuristic compares each value against its default to decide whether it was
     # explicitly set. Edge case: if you deliberately pass a value that *equals* the default
-    # (e.g. reserve_mem_gb equal to the computed smart default) it will be treated as "not set"
-    # and a base_config value will take precedence. To avoid this, use a DaskSetupConfig
-    # object via the 'config=' parameter instead.
+    # (e.g. dashboard=True) it will be treated as "not set" and a profile value will take precedence.
     explicit_params: dict[str, Any] = {}
 
     if workload_type != "io":
@@ -140,7 +130,7 @@ def _resolve_configuration(
     if max_workers is not None:
         explicit_params["max_workers"] = max_workers
     if reserve_mem_gb is not None:
-        # None means "use the smart default"; an explicit float means "user chose this"
+        # Explicit float means "user chose this"
         explicit_params["reserve_mem_gb"] = reserve_mem_gb
     if max_mem_gb is not None:
         explicit_params["max_mem_gb"] = max_mem_gb
@@ -152,10 +142,6 @@ def _resolve_configuration(
         explicit_params["min_workers"] = min_workers
     if suggest_chunks is not False:
         explicit_params["suggest_chunks"] = suggest_chunks
-    if fallback_on_detection_failure:
-        explicit_params["fallback_on_detection_failure"] = fallback_on_detection_failure
-    if adaptive_memory:
-        explicit_params["adaptive_memory"] = adaptive_memory
 
     explicit_config = DaskSetupConfig(**explicit_params) if explicit_params else None
 
@@ -308,7 +294,7 @@ def setup_dask_client(
 def setup_dask_client(
     workload_type: str = "io",
     max_workers: int | None = None,
-    reserve_mem_gb: float | None = None,
+    reserve_mem_gb: float = 50.0,
     max_mem_gb: float | None = None,
     dashboard: bool = True,
     adaptive: bool = False,
@@ -473,8 +459,6 @@ def setup_dask_client(
         logger.debug("Mode auto-resolved", mode=resolved_mode)
 
     if resolved_mode == "interactive":
-        from .multinode import setup_interactive_cluster
-
         logger.info("Interactive cluster mode — using already-allocated nodes")
         client, cluster, tmp_path = setup_interactive_cluster(
             workload_type=workload_type,
@@ -482,8 +466,6 @@ def setup_dask_client(
         return client, cluster, tmp_path  # type: ignore[return-value]
 
     if resolved_mode in {"pbs", "slurm"}:
-        from .multinode import setup_pbs_cluster, setup_slurm_cluster
-
         mn_cfg = multi_node_config
         if mn_cfg is None:
             # Build a minimal MultiNodeConfig from whatever was passed
@@ -515,20 +497,25 @@ def setup_dask_client(
         logger.info("Auto-selected profile", profile=profile)
 
     # Load and merge configuration
+    # Use explicit default for reserve_mem_gb if not provided
+    resolved_reserve_mem = reserve_mem_gb if reserve_mem_gb is not None else 50.0
+
     config = _resolve_configuration(
-        config=config,
         profile=profile,
         workload_type=workload_type,
         max_workers=max_workers,
-        reserve_mem_gb=reserve_mem_gb,
+        reserve_mem_gb=resolved_reserve_mem,
         max_mem_gb=max_mem_gb,
         dashboard=dashboard,
         adaptive=adaptive,
         min_workers=min_workers,
         suggest_chunks=suggest_chunks,
-        fallback_on_detection_failure=fallback_on_detection_failure,
-        adaptive_memory=adaptive_memory,
     )
+
+    # Apply additional config-level settings that don't go through _resolve_configuration
+    config.fallback_on_detection_failure = fallback_on_detection_failure
+    config.adaptive_memory = adaptive_memory
+
     logger.debug(
         "Configuration resolved",
         workload_type=config.workload_type,
@@ -618,19 +605,11 @@ def setup_dask_client(
     if config.dashboard and config.dashboard_port:
         dashboard_address = f":{config.dashboard_port}"
 
-    # Map the boolean silence_logs config to a logging level.
-    # True  → suppress everything except errors (logging.ERROR)
-    # False → show warnings and above (logging.WARNING), which is a reasonable HPC default
-    import logging as _stdlib_logging
-
-    silence_logs_level = _stdlib_logging.ERROR if config.silence_logs else _stdlib_logging.WARNING
-
     cluster = create_cluster(
         topology=topology,
         memory_spec=memory_spec,
         temp_dir=temp_dir,
         dashboard_address=dashboard_address,
-        silence_logs=silence_logs_level,
         adaptive=config.adaptive,
         min_workers=config.min_workers,
         memory_target=config.memory_target,
@@ -659,10 +638,23 @@ def setup_dask_client(
     if config.dashboard:
         print_dashboard_info(client, silent=config.silence_logs)
 
-    # Log setup summary via structured logger
+    # Log and print setup summary
     spill_threads_str = (
         f" | spill_threads={config.spill_threads}" if config.spill_threads is not None else ""
     )
+    summary_lines = [
+        "[setup_dask_client] Configuration summary",
+        f"temp/spill dir: {temp_dir}",
+        f"Workers: {topology.n_workers} | threads/worker: {topology.threads_per_worker} | processes: {topology.processes}",
+        f"Memory: total ~{memory_spec.total_mem_gib:.1f} GiB | usable ~{memory_spec.usable_mem_gb:.1f} GiB | per-worker ~{memory_spec.mem_per_worker_bytes / (1024**3):.1f} GiB",
+        f"Compression: spill={config.spill_compression} | comm={config.comm_compression}{spill_threads_str}",
+    ]
+
+    # Print summary to console
+    for line in summary_lines:
+        print(line)
+
+    # Also log via structured logger
     logger.info(f"Temp/spill dir: {temp_dir}")
     logger.info(
         f"Workers: {topology.n_workers}"
@@ -696,7 +688,7 @@ def setup_dask_client(
                 workload_type=config.workload_type,
                 verbose=config.suggest_chunks,
             )
-            # recommend_chunks returns ChunkRecommendation when verbose=True, dict otherwise
+            # recommend_chunks always returns ChunkRecommendation
             chunk_recommendations = raw.chunks if hasattr(raw, "chunks") else raw
             logger.info("Chunk recommendations computed", chunks=str(chunk_recommendations))
 

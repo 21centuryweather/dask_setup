@@ -1290,8 +1290,8 @@ class TestValidateChunks:
 
         from dask_setup.xarray import recommend_chunks, validate_chunks
 
-        # ERA5-style 4-D dataset
-        data = np.zeros((240, 37, 181, 360), dtype="float32")
+        # 4-D dataset with ERA5-style dimension names (small enough to be fast)
+        data = np.zeros((24, 4, 18, 36), dtype="float32")
         ds = xr.Dataset({"t": (["time", "level", "latitude", "longitude"], data)})
 
         chunks = recommend_chunks(ds)
@@ -1312,8 +1312,9 @@ class TestValidateChunks:
 
         from dask_setup.xarray import validate_chunks
 
-        # Small dataset — full extents are large, but chunks are tiny
-        data = np.zeros((500, 50, 200, 400), dtype="float32")
+        # The array itself is tiny; the key property being tested is that
+        # validate_chunks uses chunk sizes (not full dim extents) in its estimate.
+        data = np.zeros((20, 8, 15, 10), dtype="float32")
         ds = xr.Dataset({"v": (["time", "lev", "lat", "lon"], data)})
 
         # Very small chunks — 1 element per dim → single chunk = 4 bytes
@@ -1336,12 +1337,13 @@ class TestValidateChunks:
 
         from dask_setup.xarray import validate_chunks
 
-        data = np.zeros((10, 5), dtype="float32")
+        # 20×10 float32 = 800 bytes per chunk, which exceeds 50% of 1 KiB (512 bytes)
+        data = np.zeros((20, 10), dtype="float32")
         ds = xr.Dataset({"v": (["x", "y"], data)})
         # Chunk the whole dataset as one piece
-        ds_chunked = ds.chunk({"x": 10, "y": 5})
+        ds_chunked = ds.chunk({"x": 20, "y": 10})
 
-        # Pretend the worker has only 1 KiB of memory so even a tiny chunk warns
+        # Pretend the worker has only 1 KiB of memory so the 800-byte chunk warns
         tiny_worker_bytes = 1024
         with patch(
             "dask_setup.xarray._get_cluster_info",

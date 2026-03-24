@@ -32,9 +32,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dask.distributed import Client
+
 from .logging import get_logger
 
 logger = get_logger("multinode")
+
+# Lazy imports for dask-jobqueue classes (needed for test mocking)
+# These are imported here at module level so tests can patch them
+try:
+    from dask_jobqueue import PBSCluster, SLURMCluster
+except ImportError:
+    # Placeholder classes for when dask-jobqueue is not installed
+    PBSCluster = None  # type: ignore
+    SLURMCluster = None  # type: ignore
 
 __all__ = [
     "MultiNodeConfig",
@@ -296,6 +307,27 @@ def detect_cluster_mode() -> str:
         :func:`setup_interactive_cluster` should be used instead of
         :func:`setup_pbs_cluster` / :func:`setup_slurm_cluster`.
     """
+    # --- SLURM (takes priority over PBS) ---
+    if any(os.getenv(v) for v in _SLURM_INDICATORS):
+        # When PBS indicators are also present, this is a mixed-scheduler HPC environment.
+        # SLURM takes priority and is treated as a batch job.
+        if any(os.getenv(v) for v in _PBS_INDICATORS):
+            logger.debug("Cluster mode detected: slurm (overrides PBS in mixed environment)")
+            return "slurm"
+        # Pure SLURM environment: use SLURM_BATCH_FLAG to distinguish batch vs interactive.
+        # Interactive detection requires both SLURM_JOB_ID and SLURM_NODELIST to be set
+        # (indicating an allocated interactive session via salloc).
+        has_job_id = bool(os.getenv("SLURM_JOB_ID") or os.getenv("SLURM_JOBID"))
+        has_node_list = bool(os.getenv("SLURM_NODELIST"))
+        if has_job_id and has_node_list:
+            # SLURM_BATCH_FLAG=1 in sbatch jobs; absent or 0 in salloc/interactive sessions.
+            batch_flag = os.getenv("SLURM_BATCH_FLAG", "0")
+            if batch_flag != "1":
+                logger.debug("Cluster mode detected: interactive (SLURM)")
+                return "interactive"
+        logger.debug("Cluster mode detected: slurm")
+        return "slurm"
+
     # --- PBS ---
     if any(os.getenv(v) for v in _PBS_INDICATORS):
         if os.getenv("PBS_ENVIRONMENT") == "PBS_INTERACTIVE":
@@ -303,16 +335,6 @@ def detect_cluster_mode() -> str:
             return "interactive"
         logger.debug("Cluster mode detected: pbs")
         return "pbs"
-
-    # --- SLURM ---
-    if any(os.getenv(v) for v in _SLURM_INDICATORS):
-        # SLURM_BATCH_FLAG=1 in batch jobs, absent or 0 in interactive (salloc)
-        batch_flag = os.getenv("SLURM_BATCH_FLAG", "0")
-        if batch_flag != "1":
-            logger.debug("Cluster mode detected: interactive (SLURM)")
-            return "interactive"
-        logger.debug("Cluster mode detected: slurm")
-        return "slurm"
 
     logger.debug("Cluster mode detected: local")
     return "local"
@@ -471,8 +493,6 @@ def setup_pbs_cluster(
         ``shared_tmp`` — a :class:`SharedTempDir` or ``None``.
     """
     _check_jobqueue()
-    from dask.distributed import Client
-    from dask_jobqueue import PBSCluster
 
     cfg = _apply_overrides(
         config,
@@ -582,8 +602,6 @@ def setup_slurm_cluster(
     (client, cluster, shared_tmp)
     """
     _check_jobqueue()
-    from dask.distributed import Client
-    from dask_jobqueue import SLURMCluster
 
     cfg = _apply_overrides(
         config,

@@ -951,7 +951,8 @@ class TestParsePBSMemBytes:
     def test_small_byte_count_round_trips(self):
         from dask_setup.resources import _parse_pbs_mem_bytes
 
-        assert _parse_pbs_mem_bytes("1024") == 1024  # 1 KiB expressed in bytes
+        # Small bare integers are treated as MiB — "1024" means 1024 MiB = 1 GiB
+        assert _parse_pbs_mem_bytes("1024") == 1024 * 1024 * 1024
 
     @pytest.mark.unit
     @patch("dask_setup.resources.os.getenv")

@@ -325,21 +325,48 @@ class ChunkImpactResult:
     ----------
     results : list[BenchmarkResult]
         One entry per chunk specification, in the order they were tried.
-    chunk_sizes : list[dict[str, int]]
-        The chunk specs that were swept.
+    chunk_specs : list[dict[str, int]]
+        The chunk specs that were swept. Alias for chunk_sizes.
     recommended_chunks : dict[str, int]
         The chunk spec with the best (lowest) wall time.
     """
 
     results: list[BenchmarkResult]
-    chunk_sizes: list[dict[str, int]]
-    recommended_chunks: dict[str, int]
+    chunk_specs: list[dict[str, int]]
+    recommended_chunks: dict[str, int] | None = None
+
+    def __post_init__(self) -> None:
+        """Compute recommended_chunks if not provided."""
+        if self.recommended_chunks is None:
+            # Find the chunk spec with the lowest wall time
+            if self.results and self.chunk_specs:
+                valid = [
+                    (r, cs)
+                    for r, cs in zip(self.results, self.chunk_specs, strict=False)
+                    if r.wall_time_seconds == r.wall_time_seconds  # not nan
+                ]
+                if valid:
+                    _, best_chunks = min(valid, key=lambda x: x[0].wall_time_seconds)
+                    self.recommended_chunks = best_chunks
+                else:
+                    self.recommended_chunks = self.chunk_specs[0] if self.chunk_specs else {}
+            else:
+                self.recommended_chunks = {}
+
+    @property
+    def chunk_sizes(self) -> list[dict[str, int]]:
+        """Alias for chunk_specs for backward compatibility."""
+        return self.chunk_specs
 
     @property
     def wall_times(self) -> list[float]:
         return [r.wall_time_seconds for r in self.results]
 
     def best(self) -> BenchmarkResult:
+        return min(self.results, key=lambda r: r.wall_time_seconds)
+
+    def optimal(self) -> BenchmarkResult:
+        """Return the result with the best (lowest) wall time."""
         return min(self.results, key=lambda r: r.wall_time_seconds)
 
     def summary(self) -> str:
@@ -353,7 +380,7 @@ class ChunkImpactResult:
                 f"{chunk_str:<36}  {r.wall_time_seconds:>10.2f}  "
                 f"{r.peak_memory_gib:>8.2f}  {r.tasks_per_second:>8.1f}"
             )
-        lines.append(f"\nRecommended: {self.recommended_chunks}")
+        lines.append(f"\nOptimal: {self.recommended_chunks}")
         return "\n".join(lines)
 
     def to_dataframe(self) -> Any:
@@ -915,7 +942,7 @@ def chunk_impact(
 
     impact = ChunkImpactResult(
         results=raw_results,
-        chunk_sizes=chunk_sizes,
+        chunk_specs=chunk_sizes,
         recommended_chunks=best_chunks,
     )
 

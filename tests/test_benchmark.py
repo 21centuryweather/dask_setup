@@ -511,7 +511,7 @@ def test_benchmark_symbols_exported():
     assert hasattr(dask_setup, "run_synthetic_benchmark")
 
 
-def test_version_is_1_8():
+def test_version_is_2():
     import dask_setup
 
-    assert dask_setup.__version__.startswith("1.8")
+    assert dask_setup.__version__.startswith("2.")

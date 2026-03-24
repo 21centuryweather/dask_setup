@@ -103,12 +103,10 @@ def configure_dask_settings(
     }
 
     # Add spill threads configuration if specified.
-    # "distributed.worker.io-threads" controls the size of each worker's I/O thread pool,
-    # which is used for spill read/write operations.
-    # Note: "distributed.p2p.threads" is a different setting (peer-to-peer shuffle threads)
-    # and is intentionally NOT used here.
+    # "distributed.p2p.threads" controls the number of threads used for
+    # peer-to-peer operations and spill I/O operations.
     if spill_threads is not None:
-        config_dict["distributed.worker.io-threads"] = spill_threads
+        config_dict["distributed.p2p.threads"] = spill_threads
 
     logger.debug(
         "Dask global settings applied",

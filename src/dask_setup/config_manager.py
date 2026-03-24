@@ -202,7 +202,7 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
     def get_profile(self, name: str) -> ConfigProfile | None:
         """Get a specific profile by name.
 
-        Search order: user profiles → site-wide profiles → builtin profiles.
+        Search order: builtin profiles → site-wide profiles → user profiles.
 
         Args:
             name: Profile name
@@ -210,13 +210,9 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
         Returns:
             ConfigProfile if found, None otherwise
         """
-        # User profiles take highest precedence
-        profile_file = self.profiles_dir / f"{name}.yaml"
-        if profile_file.exists():
-            try:
-                return self.load_profile_from_file(profile_file)
-            except Exception as e:
-                raise InvalidConfigurationError(f"Failed to load profile '{name}': {e}") from e
+        # Built-in profiles take highest precedence
+        if name in self.builtin_profiles:
+            return self.builtin_profiles[name]
 
         # Site-wide profiles
         site_file = self.site_profiles_dir / f"{name}.yaml"
@@ -226,9 +222,13 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
             except Exception as e:
                 raise InvalidConfigurationError(f"Failed to load site profile '{name}': {e}") from e
 
-        # Built-in profiles
-        if name in self.builtin_profiles:
-            return self.builtin_profiles[name]
+        # User profiles take lowest precedence
+        profile_file = self.profiles_dir / f"{name}.yaml"
+        if profile_file.exists():
+            try:
+                return self.load_profile_from_file(profile_file)
+            except Exception as e:
+                raise InvalidConfigurationError(f"Failed to load profile '{name}': {e}") from e
 
         return None
 

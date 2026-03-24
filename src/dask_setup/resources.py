@@ -175,10 +175,14 @@ def _parse_mem_bytes(mem_str: str | None) -> int | None:
 def _parse_pbs_mem_bytes(mem_str: str | None) -> int | None:
     """Parse a PBS memory string to bytes.
 
-    Unlike the generic :func:`_parse_mem_bytes`, bare integers are treated as
-    **bytes** rather than megabytes.  This matches the PBS Pro convention used
-    on NCI Gadi, where ``PBS_MEM`` / ``PBS_VMEM`` are set to the raw byte count
-    with no unit suffix (e.g. ``"532575944704"`` for 496 GiB).
+    Bare integers are interpreted using a magnitude heuristic:
+
+    * If the value is **>= 1,000,000,000** it is already in bytes (e.g. NCI
+      Gadi sets ``PBS_MEM`` / ``PBS_VMEM`` to the raw byte count such as
+      ``"532575944704"`` for 496 GiB).
+    * If the value is **< 1,000,000,000** it is treated as **mebibytes** (MiB),
+      which is the convention used by many other PBS Pro sites (e.g.
+      ``"16384"`` for 16 GiB).
 
     Strings that include a unit suffix (e.g. ``"512gb"``, ``"496gib"``) are
     forwarded to :func:`_parse_mem_bytes` unchanged.
@@ -193,8 +197,13 @@ def _parse_pbs_mem_bytes(mem_str: str | None) -> int | None:
         return None
     stripped = mem_str.strip()
     if stripped.isdigit():
-        # Plain integer — PBS Pro reports raw bytes, not MB.
-        return int(stripped)
+        value = int(stripped)
+        if value >= 1_000_000_000:
+            # Large value — already expressed in bytes (e.g. Gadi PBS_MEM)
+            return value
+        else:
+            # Small/moderate value — treat as MiB (common PBS Pro convention)
+            return value * 1024 * 1024
     # Has a unit suffix — use the general parser.
     return _parse_mem_bytes(stripped)
 

@@ -136,8 +136,10 @@ class DaskSetupLogger:
         handler.setFormatter(formatter)
         root_logger.addHandler(handler)
 
-        # Prevent propagation to avoid double logging
-        root_logger.propagate = False
+        # Allow propagation so pytest's caplog fixture can capture log records.
+        # Note: this may cause double-logging if the root Python logger also has handlers,
+        # but that is preferable to breaking test log capture.
+        root_logger.propagate = True
 
         cls._configured = True
 

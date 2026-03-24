@@ -252,10 +252,6 @@ class DaskSetupConfig:
             "io_access_pattern": self.io_access_pattern,
             "io_storage_location": self.io_storage_location,
             "io_compression_level": self.io_compression_level,
-            # Resilience options
-            "fallback_on_detection_failure": self.fallback_on_detection_failure,
-            # Adaptive behaviour options
-            "adaptive_memory": self.adaptive_memory,
             # Metadata
             "name": self.name,
             "description": self.description,
