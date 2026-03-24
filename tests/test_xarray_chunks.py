@@ -924,3 +924,333 @@ class TestRealXarrayIntegration:
 
         assert isinstance(chunks, dict)
         # Should analyze existing chunking and provide recommendations
+
+
+# ---------------------------------------------------------------------------
+# _classify_dimensions
+# ---------------------------------------------------------------------------
+
+class TestClassifyDimensions:
+    """Tests for the dimension classifier helper."""
+
+    def test_temporal_patterns(self):
+        from dask_setup.xarray import _classify_dimensions
+
+        dims = {"time": 365, "lat": 90, "lon": 180}
+        result = _classify_dimensions(dims)
+        assert "time" in result["temporal"]
+        assert "lat" in result["spatial"]
+        assert "lon" in result["spatial"]
+        assert result["other"] == []
+
+    def test_case_insensitive(self):
+        from dask_setup.xarray import _classify_dimensions
+
+        dims = {"Time": 365, "Latitude": 90, "LONGITUDE": 180}
+        result = _classify_dimensions(dims)
+        assert "Time" in result["temporal"]
+        assert "Latitude" in result["spatial"]
+        assert "LONGITUDE" in result["spatial"]
+
+    def test_other_dims(self):
+        from dask_setup.xarray import _classify_dimensions
+
+        dims = {"time": 12, "lat": 90, "lon": 180, "member": 50, "scenario": 3}
+        result = _classify_dimensions(dims)
+        assert "member" in result["other"]
+        assert "scenario" in result["other"]
+
+    def test_nemo_grid_names(self):
+        from dask_setup.xarray import _classify_dimensions
+
+        dims = {"time_counter": 365, "ni": 180, "nj": 90}
+        result = _classify_dimensions(dims)
+        assert "time_counter" in result["temporal"]
+        assert "ni" in result["spatial"]
+        assert "nj" in result["spatial"]
+
+    def test_alternative_time_names(self):
+        from dask_setup.xarray import _classify_dimensions
+
+        for name in ("date", "step", "record", "month", "year", "hour"):
+            dims = {name: 10}
+            assert name in _classify_dimensions(dims)["temporal"], f"Expected {name!r} to be temporal"
+
+    def test_empty_dims(self):
+        from dask_setup.xarray import _classify_dimensions
+
+        result = _classify_dimensions({})
+        assert result == {"temporal": [], "spatial": [], "other": []}
+
+
+# ---------------------------------------------------------------------------
+# chunk_domain parameter in _calculate_optimal_chunks
+# ---------------------------------------------------------------------------
+
+class TestChunkDomain:
+    """Tests for chunk_domain constraint in chunk calculations."""
+
+    @pytest.fixture
+    def dataset_info_3d(self):
+        """3-D (time × lat × lon) dataset info."""
+        return {
+            "dims": {"time": 365, "lat": 90, "lon": 180},
+            "coords": {},
+            "variables": {
+                "temperature": {
+                    "dtype": "float32",
+                    "shape": (365, 90, 180),
+                    "dims": ["time", "lat", "lon"],
+                    "size_bytes": 365 * 90 * 180 * 4,
+                    "current_chunks": None,
+                }
+            },
+            "total_uncompressed_bytes": 365 * 90 * 180 * 4,
+            "current_chunking": {},
+            "is_currently_chunked": False,
+        }
+
+    @pytest.fixture
+    def cluster_info(self):
+        return {
+            "n_workers": 4,
+            "threads_per_worker": 4,
+            "memory_limit_bytes": 8 * 1024 ** 3,
+            "total_memory_bytes": 32 * 1024 ** 3,
+        }
+
+    def test_spatial_domain_locks_temporal(self, dataset_info_3d, cluster_info):
+        """chunk_domain='spatial' → time dim gets -1, lat/lon are chunked."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        with patch("dask_setup.xarray.np") as mock_np:
+            mock_np.dtype.return_value.itemsize = 4
+
+            result = _calculate_optimal_chunks(
+                dataset_info=dataset_info_3d,
+                cluster_info=cluster_info,
+                workload_type="cpu",
+                chunk_domain="spatial",
+            )
+
+        assert result.chunks.get("time") == -1, "time should be locked to -1"
+        # At least one spatial dim should be chunked (or -1 won't appear for them)
+        assert "lat" in result.chunks or "lon" in result.chunks
+
+    def test_temporal_domain_locks_spatial(self, dataset_info_3d, cluster_info):
+        """chunk_domain='temporal' → lat/lon get -1, time is chunked."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        with patch("dask_setup.xarray.np") as mock_np:
+            mock_np.dtype.return_value.itemsize = 4
+
+            result = _calculate_optimal_chunks(
+                dataset_info=dataset_info_3d,
+                cluster_info=cluster_info,
+                workload_type="cpu",
+                chunk_domain="temporal",
+            )
+
+        assert result.chunks.get("lat") == -1, "lat should be locked to -1"
+        assert result.chunks.get("lon") == -1, "lon should be locked to -1"
+        # time should NOT be locked
+        assert result.chunks.get("time") != -1
+
+    def test_no_domain_unchanged(self, dataset_info_3d, cluster_info):
+        """chunk_domain=None behaves identically to not passing the parameter."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        with patch("dask_setup.xarray.np") as mock_np:
+            mock_np.dtype.return_value.itemsize = 4
+
+            result_none = _calculate_optimal_chunks(
+                dataset_info=dataset_info_3d,
+                cluster_info=cluster_info,
+                workload_type="cpu",
+                chunk_domain=None,
+            )
+            result_default = _calculate_optimal_chunks(
+                dataset_info=dataset_info_3d,
+                cluster_info=cluster_info,
+                workload_type="cpu",
+            )
+
+        assert result_none.chunks == result_default.chunks
+
+    def test_invalid_domain_raises(self, dataset_info_3d, cluster_info):
+        """Passing an unrecognised chunk_domain raises ValueError."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        with patch("dask_setup.xarray.np") as mock_np:
+            mock_np.dtype.return_value.itemsize = 4
+            with pytest.raises(ValueError, match="chunk_domain"):
+                _calculate_optimal_chunks(
+                    dataset_info=dataset_info_3d,
+                    cluster_info=cluster_info,
+                    chunk_domain="vertical",
+                )
+
+    def test_locked_dims_stored_in_dataset_info(self, dataset_info_3d, cluster_info):
+        """Locked dims are recorded in recommendation.dataset_info."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        with patch("dask_setup.xarray.np") as mock_np:
+            mock_np.dtype.return_value.itemsize = 4
+
+            result = _calculate_optimal_chunks(
+                dataset_info=dataset_info_3d,
+                cluster_info=cluster_info,
+                workload_type="cpu",
+                chunk_domain="spatial",
+            )
+
+        assert result.dataset_info.get("chunk_domain") == "spatial"
+        assert "time" in result.dataset_info.get("locked_dims", [])
+
+    def test_warn_when_no_spatial_dims(self, cluster_info):
+        """chunk_domain='spatial' on a time-only dataset produces a warning."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        dataset_info = {
+            "dims": {"time": 365, "member": 50},
+            "coords": {},
+            "variables": {
+                "sst": {
+                    "dtype": "float32",
+                    "shape": (365, 50),
+                    "dims": ["time", "member"],
+                    "size_bytes": 365 * 50 * 4,
+                    "current_chunks": None,
+                }
+            },
+            "total_uncompressed_bytes": 365 * 50 * 4,
+            "current_chunking": {},
+            "is_currently_chunked": False,
+        }
+
+        with patch("dask_setup.xarray.np") as mock_np:
+            mock_np.dtype.return_value.itemsize = 4
+
+            result = _calculate_optimal_chunks(
+                dataset_info=dataset_info,
+                cluster_info=cluster_info,
+                chunk_domain="spatial",
+            )
+
+        warning_texts = " ".join(result.warnings)
+        assert "spatial" in warning_texts.lower()
+
+    def test_warn_when_no_temporal_dims(self, cluster_info):
+        """chunk_domain='temporal' on a spatial-only dataset produces a warning."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        dataset_info = {
+            "dims": {"lat": 720, "lon": 1440},
+            "coords": {},
+            "variables": {
+                "topo": {
+                    "dtype": "float32",
+                    "shape": (720, 1440),
+                    "dims": ["lat", "lon"],
+                    "size_bytes": 720 * 1440 * 4,
+                    "current_chunks": None,
+                }
+            },
+            "total_uncompressed_bytes": 720 * 1440 * 4,
+            "current_chunking": {},
+            "is_currently_chunked": False,
+        }
+
+        with patch("dask_setup.xarray.np") as mock_np:
+            mock_np.dtype.return_value.itemsize = 4
+
+            result = _calculate_optimal_chunks(
+                dataset_info=dataset_info,
+                cluster_info=cluster_info,
+                chunk_domain="temporal",
+            )
+
+        warning_texts = " ".join(result.warnings)
+        assert "temporal" in warning_texts.lower()
+
+
+# ---------------------------------------------------------------------------
+# chunk_domain on the public recommend_chunks API
+# ---------------------------------------------------------------------------
+
+class TestRecommendChunksWithDomain:
+    """Integration tests for chunk_domain via the public recommend_chunks()."""
+
+    def test_spatial_domain_integration(self):
+        """recommend_chunks(chunk_domain='spatial') locks time to -1."""
+        import numpy as np
+        import xarray as xr
+        from dask_setup.xarray import recommend_chunks
+
+        rng = np.random.default_rng(seed=0)
+        data = rng.random((100, 36, 72)).astype("float32")
+        ds = xr.Dataset(
+            {"temp": (["time", "lat", "lon"], data)},
+            coords={"time": np.arange(100), "lat": np.linspace(-90, 90, 36),
+                    "lon": np.linspace(-180, 180, 72)},
+        )
+
+        chunks = recommend_chunks(ds, chunk_domain="spatial")
+
+        assert isinstance(chunks, dict)
+        assert chunks.get("time") == -1, "time should be -1 for chunk_domain='spatial'"
+        # Applying the chunks to the dataset should work without error
+        ds.chunk(chunks)
+
+    def test_temporal_domain_integration(self):
+        """recommend_chunks(chunk_domain='temporal') locks lat/lon to -1."""
+        import numpy as np
+        import xarray as xr
+        from dask_setup.xarray import recommend_chunks
+
+        rng = np.random.default_rng(seed=1)
+        data = rng.random((500, 36, 72)).astype("float32")
+        ds = xr.Dataset(
+            {"temp": (["time", "lat", "lon"], data)},
+            coords={"time": np.arange(500), "lat": np.linspace(-90, 90, 36),
+                    "lon": np.linspace(-180, 180, 72)},
+        )
+
+        chunks = recommend_chunks(ds, chunk_domain="temporal")
+
+        assert isinstance(chunks, dict)
+        assert chunks.get("lat") == -1, "lat should be -1 for chunk_domain='temporal'"
+        assert chunks.get("lon") == -1, "lon should be -1 for chunk_domain='temporal'"
+        ds.chunk(chunks)
+
+    def test_invalid_domain_raises_via_public_api(self):
+        """Invalid chunk_domain raises ValueError from recommend_chunks."""
+        import numpy as np
+        import xarray as xr
+        from dask_setup.xarray import recommend_chunks
+
+        data = np.zeros((10, 5, 5), dtype="float32")
+        ds = xr.Dataset({"v": (["time", "lat", "lon"], data)})
+
+        with pytest.raises(ValueError, match="chunk_domain"):
+            recommend_chunks(ds, chunk_domain="diagonal")
+
+    def test_verbose_report_shows_domain(self):
+        """verbose=True includes chunk_domain info in the printed report."""
+        import numpy as np
+        import xarray as xr
+        from dask_setup.xarray import recommend_chunks
+        import io, sys
+
+        data = np.zeros((200, 36, 72), dtype="float32")
+        ds = xr.Dataset({"temp": (["time", "lat", "lon"], data)})
+
+        captured = io.StringIO()
+        old_stdout, sys.stdout = sys.stdout, captured
+        try:
+            recommend_chunks(ds, chunk_domain="spatial", verbose=True)
+        finally:
+            sys.stdout = old_stdout
+
+        output = captured.getvalue()
+        assert "spatial" in output.lower()

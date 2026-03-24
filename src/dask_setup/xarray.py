@@ -208,12 +208,54 @@ def _analyze_dataset(ds: xr.Dataset | xr.DataArray) -> dict[str, Any]:
     }
 
 
+_TEMPORAL_PATTERNS: tuple[str, ...] = (
+    "time", "date", "step", "record", "sample", "day", "month", "year", "hour",
+)
+_SPATIAL_PATTERNS: tuple[str, ...] = (
+    "lat", "lon", "latitude", "longitude",
+    "x", "y", "z",
+    "north", "south", "east", "west",
+    "altitude", "depth", "level", "lev", "height", "pressure",
+    "ni", "nj",  # NEMO / irregular-grid names
+)
+
+
+def _classify_dimensions(dims: dict[str, int]) -> dict[str, list[str]]:
+    """Classify dimension names as temporal, spatial, or other.
+
+    Matching is case-insensitive substring search, so ``"nTime"`` matches
+    ``"time"`` and ``"latitude_1"`` matches ``"lat"``.
+
+    Args:
+        dims: Mapping of dimension name → size (as returned by ``ds.sizes``).
+
+    Returns:
+        Dict with three keys:
+
+        - ``"temporal"``: dimensions that look like a time axis
+        - ``"spatial"``:  dimensions that look like a horizontal/vertical spatial axis
+        - ``"other"``:    everything else (ensemble members, stations, model levels
+                          not matched by the spatial patterns, etc.)
+    """
+    result: dict[str, list[str]] = {"temporal": [], "spatial": [], "other": []}
+    for dim in dims:
+        d_lower = dim.lower()
+        if any(t in d_lower for t in _TEMPORAL_PATTERNS):
+            result["temporal"].append(dim)
+        elif any(s in d_lower for s in _SPATIAL_PATTERNS):
+            result["spatial"].append(dim)
+        else:
+            result["other"].append(dim)
+    return result
+
+
 def _calculate_optimal_chunks(
     dataset_info: dict[str, Any],
     cluster_info: dict[str, Any],
     workload_type: str = "auto",
     target_chunk_mb: tuple[float, float] = (256, 512),
     safety_factor: float = 0.6,
+    chunk_domain: str | None = None,
 ) -> ChunkRecommendation:
     """Calculate optimal chunk sizes based on dataset and cluster characteristics.
 
@@ -223,6 +265,13 @@ def _calculate_optimal_chunks(
         workload_type: "cpu", "io", "mixed", or "auto"
         target_chunk_mb: (min, max) target chunk size in MiB
         safety_factor: Fraction of worker memory to use (0.6 = 60%)
+        chunk_domain: Optional constraint on which axis family to chunk.
+            ``"spatial"``  — apply recommended chunks to spatial dimensions
+            (lat, lon, x, y, …) only; all temporal dimensions are fully loaded
+            into a single chunk (xarray ``-1``).
+            ``"temporal"`` — apply recommended chunks to temporal dimensions
+            (time, date, step, …) only; all spatial dimensions are fully loaded.
+            ``None`` (default) — no constraint, existing behaviour.
 
     Returns:
         ChunkRecommendation object
@@ -267,10 +316,38 @@ def _calculate_optimal_chunks(
     main_var = max(variables.values(), key=lambda v: v["size_bytes"])
     main_var_dims = main_var["dims"]
 
-    # Start with current chunking or full dimensions
+    # --- chunk_domain: identify which dims are locked to full-load ---
+    dim_classes = _classify_dimensions(dims)
+    locked_dims: set[str] = set()
+
+    if chunk_domain is not None:
+        valid_domains = ("spatial", "temporal")
+        if chunk_domain not in valid_domains:
+            raise ValueError(
+                f"chunk_domain={chunk_domain!r} is not valid. "
+                f"Choose one of {valid_domains} or None."
+            )
+
+        if chunk_domain == "spatial":
+            # Lock temporal dims to full load; only chunk spatial (+ other) dims
+            locked_dims = set(dim_classes["temporal"])
+        else:  # "temporal"
+            # Lock spatial dims to full load; only chunk temporal (+ other) dims
+            locked_dims = set(dim_classes["spatial"])
+
+        # Only keep locked dims that actually appear in this variable
+        locked_dims &= set(main_var_dims)
+
+    # Dims that can be reduced to hit the memory target
+    free_dims = [d for d in main_var_dims if d not in locked_dims]
+
+    # Start with current chunking or full dimensions.
+    # Locked dims are always initialised to their full size.
     working_chunks = {}
     for dim in main_var_dims:
-        if dim in current_chunking:
+        if dim in locked_dims:
+            working_chunks[dim] = dims[dim]  # will stay at full size
+        elif dim in current_chunking:
             # Use first chunk size as representative
             current_chunk_sizes = current_chunking[dim]
             if isinstance(current_chunk_sizes, list | tuple) and current_chunk_sizes:
@@ -290,24 +367,26 @@ def _calculate_optimal_chunks(
             chunk_size *= chunk_dict.get(dim, dims[dim])
         return float(chunk_size)
 
-    # Apply chunking strategy based on workload type
+    # Apply chunking strategy based on workload type.
+    # All reduction loops only touch *free_dims*; locked dims stay at full size.
     if workload_type == "io":
         # I/O workloads: favor streaming patterns, chunk along record dimensions
         record_dims = [
             d
-            for d in main_var_dims
+            for d in free_dims
             if any(t in d.lower() for t in ["time", "date", "step", "record", "sample"])
         ]
 
         if record_dims:
             # Chunk along record dimension to enable streaming
             primary_dim = record_dims[0]
-            # Keep other dimensions unchunked for efficient I/O
-            for dim in main_var_dims:
+            # Keep non-primary free dims unchunked for efficient I/O
+            for dim in free_dims:
                 if dim != primary_dim:
                     working_chunks[dim] = dims[dim]
 
-            # Calculate optimal chunk size for primary dimension
+            # Calculate optimal chunk size for primary dimension.
+            # The locked dims contribute their full size to the footprint.
             other_elements = 1
             for dim in main_var_dims:
                 if dim != primary_dim:
@@ -321,15 +400,14 @@ def _calculate_optimal_chunks(
 
     elif workload_type == "cpu":
         # CPU workloads: favor square-ish chunks for compute efficiency
-        # Try to make chunks roughly equal in all dimensions
         current_bytes = _estimate_chunk_bytes(working_chunks)
 
         while current_bytes > effective_target_max and any(
-            working_chunks[d] > 1 for d in main_var_dims
+            working_chunks[d] > 1 for d in free_dims
         ):
-            # Find largest chunkable dimension
+            # Find largest *free* chunkable dimension
             largest_dim = max(
-                [d for d in main_var_dims if working_chunks[d] > 1],
+                [d for d in free_dims if working_chunks[d] > 1],
                 key=lambda d: working_chunks[d],
                 default=None,
             )
@@ -342,35 +420,33 @@ def _calculate_optimal_chunks(
 
     else:  # mixed workload
         # Mixed: balance between streaming and compute efficiency
-        # Prefer to chunk 2D spatial dimensions while keeping time contiguous
-        spatial_dims = [
-            d
-            for d in main_var_dims
-            if any(t in d.lower() for t in ["x", "y", "z", "lat", "lon", "latitude", "longitude"])
+        # Prefer to chunk spatial free-dims while keeping temporal free-dims large
+        spatial_free = [
+            d for d in free_dims
+            if any(t in d.lower() for t in _SPATIAL_PATTERNS)
         ]
-        time_dims = [
-            d for d in main_var_dims if any(t in d.lower() for t in ["time", "date", "step"])
+        time_free = [
+            d for d in free_dims
+            if any(t in d.lower() for t in _TEMPORAL_PATTERNS)
         ]
 
-        # Keep time dimensions large, chunk spatial dimensions
         current_bytes = _estimate_chunk_bytes(working_chunks)
 
         while current_bytes > effective_target_max:
-            # Prefer to chunk spatial dimensions first
+            # Prefer to chunk spatial free dims first
             candidate_dims = (
-                spatial_dims
-                if spatial_dims
-                else [d for d in main_var_dims if working_chunks[d] > 1 and d not in time_dims]
+                spatial_free
+                if spatial_free
+                else [d for d in free_dims if working_chunks[d] > 1 and d not in time_free]
             )
 
             if not candidate_dims:
-                # Fall back to chunking any dimension
-                candidate_dims = [d for d in main_var_dims if working_chunks[d] > 1]
+                # Fall back to any reducible free dim
+                candidate_dims = [d for d in free_dims if working_chunks[d] > 1]
 
             if not candidate_dims:
                 break
 
-            # Chunk the largest spatial dimension
             largest_dim = max(candidate_dims, key=lambda d: working_chunks[d])
             working_chunks[largest_dim] = max(1, working_chunks[largest_dim] // 2)
             current_bytes = _estimate_chunk_bytes(working_chunks)
@@ -384,7 +460,7 @@ def _calculate_optimal_chunks(
         total_chunks *= n_chunks_in_dim
 
     # Adjust if we have too few chunks for good parallelism
-    if total_chunks < n_workers and any(working_chunks[d] < dims[d] for d in main_var_dims):
+    if total_chunks < n_workers and any(working_chunks[d] < dims[d] for d in free_dims):
         warnings_list.append(
             f"Generated {total_chunks} chunks for {n_workers} workers. "
             "Consider using fewer workers or rechunking manually for better parallelism."
@@ -398,11 +474,28 @@ def _calculate_optimal_chunks(
             "Consider using larger chunk sizes if memory permits."
         )
 
-    # Extract final recommendations (only include dimensions that are actually chunked)
+    # Warn if chunk_domain was requested but no matching dims were found
+    if chunk_domain == "spatial" and not dim_classes["spatial"]:
+        warnings_list.append(
+            "chunk_domain='spatial' was requested but no spatial dimensions were detected. "
+            "Falling back to chunking all dimensions."
+        )
+    elif chunk_domain == "temporal" and not dim_classes["temporal"]:
+        warnings_list.append(
+            "chunk_domain='temporal' was requested but no temporal dimensions were detected. "
+            "Falling back to chunking all dimensions."
+        )
+
+    # Assemble final recommendations.
+    # Locked dims use -1 (xarray "one chunk = full dimension").
+    # Free dims are included only if they are actually being chunked.
     for dim in main_var_dims:
-        chunk_size = working_chunks[dim]
-        if chunk_size < dims[dim]:  # Only include if actually chunking
-            recommended_chunks[dim] = chunk_size
+        if dim in locked_dims:
+            recommended_chunks[dim] = -1
+        else:
+            chunk_size = working_chunks[dim]
+            if chunk_size < dims[dim]:  # Only include if actually chunking
+                recommended_chunks[dim] = chunk_size
 
     # Final chunk size estimate
     final_chunk_bytes = _estimate_chunk_bytes(working_chunks)
@@ -425,7 +518,12 @@ def _calculate_optimal_chunks(
         estimated_chunk_mb=final_chunk_mb,
         total_chunks=total_chunks,
         warnings_list=warnings_list,
-        dataset_info={"workload_type": workload_type, "safety_factor": safety_factor},
+        dataset_info={
+            "workload_type": workload_type,
+            "safety_factor": safety_factor,
+            "chunk_domain": chunk_domain,
+            "locked_dims": sorted(locked_dims),
+        },
     )
 
 
@@ -449,6 +547,14 @@ def _format_chunk_report(
     # Header
     lines.append("📊 Xarray Chunking Recommendations")
     lines.append("=" * 35)
+
+    # chunk_domain line (if set)
+    chunk_domain = recommendation.dataset_info.get("chunk_domain")
+    locked_dims  = recommendation.dataset_info.get("locked_dims", [])
+    if chunk_domain is not None:
+        lines.append(f" Chunk domain: {chunk_domain}")
+        if locked_dims:
+            lines.append(f" Fully loaded (lock=-1): {locked_dims}")
 
     # Recommended chunks
     if recommendation.chunks:
@@ -495,6 +601,7 @@ def recommend_chunks(
     verbose: bool = False,
     storage_format: str | None = None,
     storage_path: str | None = None,
+    chunk_domain: str | None = None,
     **kwargs: Any,
 ) -> dict[str, int] | ChunkRecommendation:
     """Recommend optimal chunk sizes for an xarray Dataset or DataArray.
@@ -514,14 +621,28 @@ def recommend_chunks(
                 If False, return simple dict of chunk sizes.
         storage_format: Optional storage format hint ("zarr", "netcdf") for I/O optimization
         storage_path: Optional storage path/URL for format detection and location optimization
+        chunk_domain: Optional axis family to restrict chunking to.
+
+            ``"spatial"``  — only chunk spatial dimensions (lat, lon, x, y, …);
+            all temporal dimensions (time, date, step, …) are loaded fully into
+            a single chunk (equivalent to ``ds.chunk({"time": -1, ...})``).
+
+            ``"temporal"`` — only chunk temporal dimensions; all spatial
+            dimensions are loaded fully into a single chunk.
+
+            ``None`` (default) — no constraint, the existing behaviour applies
+            and all dimensions are candidates for chunking.
+
         **kwargs: Additional parameters (reserved for future use)
 
     Returns:
         If verbose=False: Dict mapping dimension names to recommended chunk sizes
+            (locked dimensions appear as ``-1``)
         If verbose=True: ChunkRecommendation object with full details
 
     Raises:
         XarrayDependencyError: If xarray or numpy are not installed
+        ValueError: If ``chunk_domain`` is not one of the accepted values
 
     Examples:
         Basic usage:
@@ -535,6 +656,16 @@ def recommend_chunks(
 
         For I/O-heavy workloads:
         >>> chunks = recommend_chunks(ds, workload_type="io")
+
+        Chunk only spatial dims, load all time into memory:
+        >>> chunks = recommend_chunks(ds, client, chunk_domain="spatial")
+        >>> # chunks == {"lat": 256, "lon": 512, "time": -1}
+        >>> ds_chunked = ds.chunk(chunks)
+
+        Chunk only the time axis, load all spatial points into memory:
+        >>> chunks = recommend_chunks(ds, client, chunk_domain="temporal")
+        >>> # chunks == {"time": 120, "lat": -1, "lon": -1}
+        >>> ds_chunked = ds.chunk(chunks)
     """
     _ensure_xarray_available()
 
@@ -589,6 +720,7 @@ def recommend_chunks(
         workload_type=workload_type,
         target_chunk_mb=target_chunk_mb,
         safety_factor=safety_factor,
+        chunk_domain=chunk_domain,
     )
 
     # Emit warnings for clearly suboptimal existing chunking
