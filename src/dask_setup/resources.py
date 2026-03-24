@@ -172,6 +172,33 @@ def _parse_mem_bytes(mem_str: str | None) -> int | None:
         return None
 
 
+def _parse_pbs_mem_bytes(mem_str: str | None) -> int | None:
+    """Parse a PBS memory string to bytes.
+
+    Unlike the generic :func:`_parse_mem_bytes`, bare integers are treated as
+    **bytes** rather than megabytes.  This matches the PBS Pro convention used
+    on NCI Gadi, where ``PBS_MEM`` / ``PBS_VMEM`` are set to the raw byte count
+    with no unit suffix (e.g. ``"532575944704"`` for 496 GiB).
+
+    Strings that include a unit suffix (e.g. ``"512gb"``, ``"496gib"``) are
+    forwarded to :func:`_parse_mem_bytes` unchanged.
+
+    Args:
+        mem_str: Memory string from a PBS environment variable, or ``None``.
+
+    Returns:
+        Memory in bytes, or ``None`` if *mem_str* is empty / unparseable.
+    """
+    if not mem_str:
+        return None
+    stripped = mem_str.strip()
+    if stripped.isdigit():
+        # Plain integer — PBS Pro reports raw bytes, not MB.
+        return int(stripped)
+    # Has a unit suffix — use the general parser.
+    return _parse_mem_bytes(stripped)
+
+
 def _detect_slurm_resources() -> ResourceSpec | None:
     """Detect resources from SLURM environment variables.
 
@@ -237,7 +264,7 @@ def _detect_pbs_resources() -> ResourceSpec | None:
     except ValueError:
         return None
 
-    total_mem_bytes = _parse_mem_bytes(pbs_mem)
+    total_mem_bytes = _parse_pbs_mem_bytes(pbs_mem)
     if total_mem_bytes is None:
         # Fall back to psutil for memory if PBS memory info is unavailable
         total_mem_bytes = psutil.virtual_memory().total

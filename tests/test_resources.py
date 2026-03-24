@@ -896,3 +896,85 @@ class TestResourceCoverageEdgeCases:
         with patch("builtins.int", side_effect=ValueError("test")):
             result = _detect_pbs_resources()
             assert result is None
+
+
+class TestParsePBSMemBytes:
+    """Tests for _parse_pbs_mem_bytes — PBS Pro bare-byte-count handling."""
+
+    @pytest.mark.unit
+    def test_none_returns_none(self):
+        from dask_setup.resources import _parse_pbs_mem_bytes
+
+        assert _parse_pbs_mem_bytes(None) is None
+
+    @pytest.mark.unit
+    def test_empty_string_returns_none(self):
+        from dask_setup.resources import _parse_pbs_mem_bytes
+
+        assert _parse_pbs_mem_bytes("") is None
+        assert _parse_pbs_mem_bytes("   ") is None
+
+    @pytest.mark.unit
+    def test_bare_integer_treated_as_bytes(self):
+        """Bare integers must NOT be multiplied by 1024² (MB scaling)."""
+        from dask_setup.resources import _parse_pbs_mem_bytes
+
+        # 496 GiB as Gadi reports it in PBS_MEM
+        gadi_496_gib = 532_575_944_704
+        result = _parse_pbs_mem_bytes(str(gadi_496_gib))
+        assert result == gadi_496_gib
+
+    @pytest.mark.unit
+    def test_bare_integer_not_inflated_like_slurm(self):
+        """Ensure we do NOT get the 1,048,576× inflation of _parse_mem_bytes."""
+        from dask_setup.resources import _parse_mem_bytes, _parse_pbs_mem_bytes
+
+        raw = "532575944704"
+        pbs_result = _parse_pbs_mem_bytes(raw)
+        slurm_result = _parse_mem_bytes(raw)  # old (wrong) behaviour for PBS
+
+        # pbs result should be many orders of magnitude smaller
+        assert pbs_result == int(raw)
+        assert slurm_result == int(raw) * 1024 * 1024
+        assert pbs_result < slurm_result
+
+    @pytest.mark.unit
+    def test_unit_suffix_delegated_to_generic_parser(self):
+        """Values with unit suffixes should go through _parse_mem_bytes."""
+        from dask_setup.resources import _parse_pbs_mem_bytes
+
+        assert _parse_pbs_mem_bytes("496gb") == 496 * 1000**3
+        assert _parse_pbs_mem_bytes("496gib") == 496 * 1024**3
+        assert _parse_pbs_mem_bytes("512mb") == 512 * 1000**2
+
+    @pytest.mark.unit
+    def test_small_byte_count_round_trips(self):
+        from dask_setup.resources import _parse_pbs_mem_bytes
+
+        assert _parse_pbs_mem_bytes("1024") == 1024  # 1 KiB expressed in bytes
+
+    @pytest.mark.unit
+    @patch("dask_setup.resources.os.getenv")
+    @patch("dask_setup.resources.psutil.virtual_memory")
+    def test_detect_pbs_resources_uses_pbs_parser(self, mock_vmem, mock_getenv):
+        """_detect_pbs_resources must use _parse_pbs_mem_bytes, not _parse_mem_bytes."""
+        # 496 GiB in bytes — what Gadi sets PBS_MEM to
+        gadi_496_gib = 532_575_944_704
+
+        def side_effect(key, *args, **kwargs):
+            return {
+                "NCPUS": "104",
+                "PBS_NCPUS": None,
+                "PBS_VMEM": None,
+                "PBS_MEM": str(gadi_496_gib),
+            }.get(key)
+
+        mock_getenv.side_effect = side_effect
+
+        result = _detect_pbs_resources()
+        assert result is not None
+        assert result.total_cores == 104
+        # Should be ~496 GiB, not ~520 million GiB
+        assert result.total_mem_bytes == gadi_496_gib
+        result_gib = result.total_mem_bytes / 1024**3
+        assert 490 < result_gib < 500, f"Expected ~496 GiB, got {result_gib:.1f} GiB"
