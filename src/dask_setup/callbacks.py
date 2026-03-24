@@ -21,7 +21,8 @@ Typical use-cases:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from .logging import get_logger
 
@@ -32,7 +33,7 @@ logger = get_logger("callbacks")
 
 
 def register_worker_callbacks(
-    client: "Client",
+    client: Client,
     on_worker_death: Callable[[str], None] | None = None,
     on_worker_added: Callable[[str], None] | None = None,
 ) -> None:
@@ -86,9 +87,7 @@ def register_worker_callbacks(
             print(f"Workers that died during the run: {dead}")
     """
     if on_worker_death is None and on_worker_added is None:
-        logger.debug(
-            "register_worker_callbacks: no callbacks provided — skipping plugin install"
-        )
+        logger.debug("register_worker_callbacks: no callbacks provided — skipping plugin install")
         return
 
     try:

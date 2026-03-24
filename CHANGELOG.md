@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-03-23
+
+### Added
+
+- **`MultiNodeConfig` dataclass (`multinode.py`).** Companion to `DaskSetupConfig` for
+  multi-node PBS/SLURM jobs. Fields include `workload_type`, `workers_per_node`,
+  `cores_per_worker`, `mem_per_worker_gb`, `walltime`, `queue`, `project`,
+  `job_extra_directives`, `n_nodes`, `shared_tmp_dir`, `env_extra`, `adaptive`,
+  `min_jobs`, and `max_jobs`. Provides `total_cores_per_job`, `total_mem_gb_per_job`
+  properties and a `to_dict()` serialiser. Full validation on construction.
+- **`setup_pbs_cluster(config, **kwargs)` function (`multinode.py`).** Wraps
+  `dask-jobqueue.PBSCluster` with `MultiNodeConfig` defaults, shared temp directory
+  support, and adaptive scaling. Returns `(client, cluster, shared_tmp)`.
+- **`setup_slurm_cluster(config, **kwargs)` function (`multinode.py`).** Mirrors
+  `setup_pbs_cluster` for SLURM via `SLURMCluster`.
+- **`SharedTempDir` dataclass (`multinode.py`).** Wraps a Lustre/GPFS shared filesystem
+  path for stores that must be visible to all workers (e.g. Rechunker targets).
+  Optionally creates a job-specific subdirectory (`dask_tmp_<JOBID>`) and supports
+  cleanup on close. Implements `__fspath__` for transparent use as a `Path`.
+- **`detect_cluster_mode()` function (`multinode.py`).** Inspects the environment for
+  SLURM (`SLURM_JOB_ID`, etc.) and PBS (`PBS_JOBID`, etc.) indicators and returns
+  `"slurm"`, `"pbs"`, or `"local"`.
+- **`generate_pbs_script(cfg, script_path, …)` function (`multinode.py`).** Generates
+  a ready-to-run `#PBS` job script string from a `MultiNodeConfig`.
+- **`generate_slurm_script(cfg, script_path, …)` function (`multinode.py`).** Generates
+  a `#SBATCH` job script string.
+- **`mode=` parameter on `setup_dask_client()` (`client.py`).** Accepts `"local"`,
+  `"pbs"`, `"slurm"`, or `"auto"` (default). In `"auto"` mode, calls
+  `detect_cluster_mode()` and dispatches to the appropriate backend. Multi-node modes
+  return a `(client, cluster, tmp_path)` 3-tuple.
+- **`multi_node_config=` parameter on `setup_dask_client()` (`client.py`).** A
+  `MultiNodeConfig` instance to use when a multi-node mode is selected. When `None`, a
+  minimal config is built from `workload_type`.
+- **`workload_type="gpu"` topology (`topology.py`).** New topology for CUDA-accelerated
+  workloads. Detects GPU count via `CUDA_VISIBLE_DEVICES` or `cupy`. Configures one
+  worker process per GPU with `ceil(total_cores / n_gpus)` CPU threads (clamped to
+  2–8). Falls back gracefully to a single-threaded worker when no GPUs are detected,
+  with a warning. `DaskSetupConfig.VALID_WORKLOAD_TYPES` updated to include `"gpu"`.
+- **`_count_gpus()` helper (`topology.py`).** Counts CUDA-capable GPUs from
+  `CUDA_VISIBLE_DEVICES` (falls back to `cupy.cuda.runtime.getDeviceCount()`).
+- **`dask-setup submit` CLI subcommand (`cli.py`).** Generates PBS or SLURM job
+  scripts from the command line. Key flags: `--scheduler` (`pbs`/`slurm`),
+  `--workload-type`, `--workers-per-node`, `--cores-per-worker`, `--mem-per-worker`,
+  `--walltime`, `--queue`, `--project`, `--n-nodes`, `--shared-tmp-dir`,
+  `--extra-directive` (repeatable), `--python`, `--output`.
+- **All new v2.0 symbols exported** from the top-level package (`__init__.py`):
+  `MultiNodeConfig`, `SharedTempDir`, `detect_cluster_mode`, `setup_pbs_cluster`,
+  `setup_slurm_cluster`, `generate_pbs_script`, `generate_slurm_script`.
+
+### Changed
+
+- `setup_dask_client()` gains `mode="auto"` and `multi_node_config=None` parameters.
+  Existing callers are unaffected (defaults preserve previous behaviour).
+- `DaskSetupConfig.VALID_WORKLOAD_TYPES` now includes `"gpu"`.
+- `decide_topology()` and `validate_topology()` updated to handle `"gpu"` workload type.
+  The high-threads warning in `validate_topology` is suppressed for GPU topologies.
+
+### Notes
+
+- Multi-node PBS/SLURM support requires `pip install dask-jobqueue`. The package
+  imports cleanly without it; a helpful `ImportError` is raised only when
+  `setup_pbs_cluster` / `setup_slurm_cluster` are called.
+- GPU topology requires `pip install cupy-cudaXXX` (matching your CUDA version) for
+  GPU auto-detection; falls back gracefully when CuPy is absent.
+
 ## [1.8.0] - 2026-03-23
 
 ### Added

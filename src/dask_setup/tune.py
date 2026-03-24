@@ -87,7 +87,7 @@ class MemoryTuneResult:
 
 
 def tune_memory_thresholds(
-    client: "Client",
+    client: Client,
     strategy: str = "auto",
     spill_threshold_gib: float = 0.5,
     tighten_by: float = 0.05,
@@ -171,12 +171,8 @@ def tune_memory_thresholds(
     try:
         worker_thresholds: dict = client.run(
             lambda: {
-                "target": __import__("dask").config.get(
-                    "distributed.worker.memory.target", 0.75
-                ),
-                "spill": __import__("dask").config.get(
-                    "distributed.worker.memory.spill", 0.85
-                ),
+                "target": __import__("dask").config.get("distributed.worker.memory.target", 0.75),
+                "spill": __import__("dask").config.get("distributed.worker.memory.spill", 0.85),
             }
         )
         if worker_thresholds:
@@ -248,6 +244,7 @@ def tune_memory_thresholds(
         _new_spill = new_spill
 
         try:
+
             def _apply(new_target=_new_target, new_spill=_new_spill):
                 import dask
 
@@ -269,9 +266,7 @@ def tune_memory_thresholds(
                 workers=workers_updated,
             )
         except Exception as e:
-            logger.warning(
-                "Failed to apply memory thresholds to workers", error=str(e)
-            )
+            logger.warning("Failed to apply memory thresholds to workers", error=str(e))
             rationale += f" [apply failed: {e}]"
     else:
         rationale = "thresholds already at boundary; no change applied"

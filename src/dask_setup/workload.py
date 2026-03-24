@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from .logging import get_logger
 
 if TYPE_CHECKING:
-    import xarray as xr
+    pass
 
 logger = get_logger("workload")
 
@@ -252,9 +252,7 @@ def infer_workload_type(ds: Any | None = None) -> str:
     # ------------------------------------------------------------------
     # 4. Decision — require a clear margin to avoid false positives
     # ------------------------------------------------------------------
-    logger.debug(
-        "Workload inference scores", cpu_score=cpu_score, io_score=io_score
-    )
+    logger.debug("Workload inference scores", cpu_score=cpu_score, io_score=io_score)
 
     if cpu_score >= io_score + 3:
         result = "cpu"

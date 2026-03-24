@@ -429,9 +429,7 @@ class ZarrV3Optimizer(IOOptimizer):
     ) -> dict[str, Any]:
         """Return a sharding config for zarr v3 ``StoreShard``."""
         # Outer (shard) shape: 4× inner chunks, clamped to dim size
-        shard_shape = {
-            dim: min(dims[dim], inner_chunks.get(dim, dims[dim]) * 4) for dim in dims
-        }
+        shard_shape = {dim: min(dims[dim], inner_chunks.get(dim, dims[dim]) * 4) for dim in dims}
         return {
             "shards": shard_shape,
             "inner_chunks": inner_chunks,

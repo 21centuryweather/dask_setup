@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/21centuryweather/dask_setup/workflows/CI/badge.svg)](https://github.com/21centuryweather/dask_setup/actions)
 
-A single-node Dask setup helper for HPC environments (especially **NCI Gadi**). It wraps `dask.distributed.LocalCluster` + `Client` with sensible defaults for PBS/SLURM systems so you spend time on science, not configuration.
+HPC-tuned Dask helpers for **NCI Gadi** and other PBS/SLURM systems. Wraps `dask.distributed.LocalCluster` + `Client` with sensible defaults for single-node jobs, and extends to multi-node PBS/SLURM clusters via `dask-jobqueue` in v2.0.
 
 **Python 3.11+** | `pip install dask-setup`
 
@@ -19,7 +19,9 @@ client, cluster, dask_tmp = setup_dask_client("io")    # heavy file I/O
 client, cluster, dask_tmp = setup_dask_client("mixed") # both
 ```
 
-For more control, pass a `DaskSetupConfig` object:
+`dask_tmp` is the path to the spill/temp directory (on `$PBS_JOBFS` if available). Pass it to Rechunker, Zarr, or anywhere else you want fast local I/O.
+
+For more control, pass a `DaskSetupConfig` object or a named profile:
 
 ```python
 from dask_setup import setup_dask_client, DaskSetupConfig
@@ -31,19 +33,38 @@ config = DaskSetupConfig(
     spill_compression="lz4",
 )
 client, cluster, dask_tmp = setup_dask_client(config=config)
+
+# Or use a built-in profile
+client, cluster, dask_tmp = setup_dask_client(profile="climate_analysis")
 ```
 
-`dask_tmp` is the path to the spill/temp directory (on `$PBS_JOBFS` if available). Pass it to Rechunker, Zarr, or anywhere else you want fast local I/O.
+**Multi-node (v2.0):**
+
+```python
+from dask_setup import setup_dask_client, MultiNodeConfig
+
+client, cluster, shared_tmp = setup_dask_client(
+    mode="auto",   # detects PBS_JOBID / SLURM_JOB_ID, falls back to local
+    multi_node_config=MultiNodeConfig(
+        workers_per_node=4,
+        cores_per_worker=12,
+        mem_per_worker_gb=32.0,
+        walltime="04:00:00",
+    ),
+)
+```
 
 ---
 
 ## Workload Types
 
-| Type | Workers | Topology | Best for |
-|------|---------|----------|----------|
-| `"cpu"` | ≈ all cores | many processes, 1 thread each | NumPy/Numba math, xarray reductions |
-| `"io"` | 1 | 1 process, 8–16 threads | opening many NetCDF/Zarr files |
-| `"mixed"` | cores / 2 | processes with 2 threads each | pipelines that both read and compute |
+| Type | Topology | Best for |
+|------|----------|----------|
+| `"cpu"` | Many processes, 1 thread each | NumPy/Numba math, xarray reductions |
+| `"io"` | 1 process, 8–16 threads | Opening many NetCDF/Zarr files concurrently |
+| `"mixed"` | Processes with 2 threads each | Pipelines that both read and compute |
+| `"gpu"` | 1 process per GPU, up to 8 threads | CuPy/RAPIDS CUDA workloads |
+| `"auto"` | Inferred from dataset | Let `dask_setup` decide based on your data |
 
 ---
 
@@ -51,13 +72,15 @@ client, cluster, dask_tmp = setup_dask_client(config=config)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `workload_type` | `"io"` | Worker topology (`"cpu"`, `"io"`, `"mixed"`) |
+| `workload_type` | `"io"` | Worker topology: `"cpu"`, `"io"`, `"mixed"`, `"gpu"`, `"auto"` |
 | `max_workers` | all cores | Hard cap on worker count |
-| `reserve_mem_gb` | `50.0` | Memory held back for OS/cache (GiB) |
+| `reserve_mem_gb` | auto (20% RAM) | Memory held back for OS/cache (GiB) |
 | `max_mem_gb` | total RAM | Upper bound on Dask's total memory use |
 | `dashboard` | `True` | Start dashboard and print SSH tunnel hint |
-| `profile` | `None` | Named config profile (see [docs/configuration.md](docs/configuration.md)) |
+| `profile` | `None` | Named config profile |
 | `config` | `None` | Pre-built `DaskSetupConfig` object — mutually exclusive with `profile` |
+| `mode` | `"auto"` | `"local"`, `"pbs"`, `"slurm"`, or `"auto"` (v2.0) |
+| `multi_node_config` | `None` | `MultiNodeConfig` for PBS/SLURM multi-node jobs (v2.0) |
 
 ---
 
@@ -118,7 +141,7 @@ client, cluster, dask_tmp = setup_dask_client(profile="climate_analysis")
 | `production` | mixed | 80 GB | Adaptive, dashboard off |
 | `interactive` | mixed | 20 GB | Jupyter notebooks, 4 workers |
 
-See [docs/configuration.md](docs/configuration.md) for how to create and save your own profiles.
+See [Configuration](https://github.com/21centuryweather/dask_setup/wiki/Configuration) for how to create and save your own profiles.
 
 ---
 
@@ -138,34 +161,58 @@ Then open: http://localhost:8787
 ## CLI
 
 ```bash
-dask-setup list                                    # list all profiles
-dask-setup show climate_analysis                   # show profile details
-dask-setup create my_profile                       # create profile interactively
+# Profile management
+dask-setup list                                       # list all profiles
+dask-setup show climate_analysis                      # show profile details
 dask-setup create my_profile --from-profile zarr_io_heavy
-dask-setup validate my_profile                     # validate a profile
-dask-setup export climate_analysis -o profile.yaml # export to YAML
+dask-setup validate my_profile
+dask-setup export climate_analysis -o profile.yaml
+dask-setup import https://example.com/team.yaml
 dask-setup delete my_profile
+
+# Synthetic benchmark
+dask-setup benchmark --profile development --size small --operation mean
+
+# Generate a PBS/SLURM job script (v2.0)
+dask-setup submit my_analysis.py --scheduler pbs \
+    --workers-per-node 4 --cores-per-worker 12 --mem-per-worker 32 \
+    --walltime 04:00:00 --queue normal --project ab01
 ```
-
----
-
-## Design Limits
-
-- **Single node only.** For multi-node, use `dask-jobqueue` (`PBSCluster`, `SLURMCluster`).
-- **No GPU tuning.** Adjust processes/threads and RMM settings manually for CuPy/RAPIDS.
-- **POSIX paths only.** Temp directory logic assumes a POSIX filesystem.
 
 ---
 
 ## Documentation
 
-| Topic | File |
-|-------|------|
-| `DaskSetupConfig` reference, profiles, CLI | [docs/configuration.md](docs/configuration.md) |
-| How it works (resource detection, memory, topology) | [docs/internals.md](docs/internals.md) |
-| I/O optimisation, xarray chunking | [docs/io_optimization.md](docs/io_optimization.md) |
-| Error types and handling | [docs/ENHANCED_ERROR_HANDLING.md](docs/ENHANCED_ERROR_HANDLING.md) |
-| Troubleshooting, PBS template, migration from v1.x | [docs/troubleshooting.md](docs/troubleshooting.md) |
+Full documentation lives in the [GitHub wiki](https://github.com/21centuryweather/dask_setup/wiki):
+
+| Page | What's covered |
+|------|----------------|
+| [Configuration](https://github.com/21centuryweather/dask_setup/wiki/Configuration) | `DaskSetupConfig`, profiles, site-wide profiles, profile inheritance, CLI, JSON Schema |
+| [Multi-Node](https://github.com/21centuryweather/dask_setup/wiki/Multi-Node) | `MultiNodeConfig`, PBS/SLURM cluster setup, GPU topology, shared temp dirs, `dask-setup submit` |
+| [IO-Optimization](https://github.com/21centuryweather/dask_setup/wiki/IO-Optimization) | `recommend_chunks`, `recommend_io_chunks`, Zarr v3, Kerchunk, Parquet/Arrow, storage-aware chunking |
+| [Benchmarking](https://github.com/21centuryweather/dask_setup/wiki/Benchmarking) | `benchmark_config`, `scaling_analysis`, `chunk_impact`, `dask-setup benchmark` |
+| [Internals](https://github.com/21centuryweather/dask_setup/wiki/Internals) | Resource detection, topology decisions, temp/spill routing, module layout |
+| [Troubleshooting](https://github.com/21centuryweather/dask_setup/wiki/Troubleshooting) | Common errors, OOM, multi-node issues, migration guide |
+
+---
+
+## Installation
+
+```bash
+pip install dask-setup
+```
+
+For multi-node PBS/SLURM support:
+
+```bash
+pip install dask-setup dask-jobqueue
+```
+
+For GPU workloads (CuPy auto-detection):
+
+```bash
+pip install dask-setup cupy-cuda12x   # match your CUDA version
+```
 
 ---
 

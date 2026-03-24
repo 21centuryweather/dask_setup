@@ -142,7 +142,7 @@ class ClusterReport:
 
 
 def cluster_report(
-    client: "Client",
+    client: Client,
     start_time: float | None = None,
 ) -> ClusterReport:
     """Collect post-run statistics from a connected Dask client.
@@ -199,10 +199,7 @@ def cluster_report(
 
             # Memory: prefer managed_bytes (newer Dask), fall back to "memory"
             mem_bytes = (
-                metrics.get("managed_bytes")
-                or metrics.get("managed")
-                or metrics.get("memory")
-                or 0
+                metrics.get("managed_bytes") or metrics.get("managed") or metrics.get("memory") or 0
             )
             if mem_bytes:
                 report.memory_per_worker_gib[worker_addr] = mem_bytes / (1024**3)

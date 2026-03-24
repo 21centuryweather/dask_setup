@@ -11,6 +11,33 @@ from .types import TopologySpec
 logger = get_logger("topology")
 
 
+def _count_gpus() -> int:
+    """Return the number of CUDA-capable GPUs visible to this process.
+
+    Checks (in order):
+    1. ``CUDA_VISIBLE_DEVICES`` environment variable
+    2. ``cupy.cuda.runtime.getDeviceCount()`` (if CuPy is installed)
+    3. Falls back to 0 if neither source is available.
+    """
+    import os
+
+    cvd = os.getenv("CUDA_VISIBLE_DEVICES", "")
+    if cvd and cvd != "-1":
+        # "0,1,2" or "NoDevFiles" etc.
+        ids = [x.strip() for x in cvd.split(",") if x.strip().isdigit()]
+        if ids:
+            return len(ids)
+
+    try:
+        import cupy  # type: ignore[import-untyped]
+
+        return cupy.cuda.runtime.getDeviceCount()
+    except Exception:
+        pass
+
+    return 0
+
+
 def decide_topology(
     workload_type: str, total_cores: int, max_workers: int | None = None
 ) -> TopologySpec:
@@ -20,9 +47,10 @@ def decide_topology(
     - "cpu": Many processes with 1 thread each (good for NumPy/compute)
     - "io": Single process with many threads (good for I/O operations)
     - "mixed": Balanced approach with multiple processes and threads
+    - "gpu": One process per GPU, multiple CPU threads per worker (CuPy/RAPIDS)
 
     Args:
-        workload_type: Type of workload ("cpu", "io", "mixed")
+        workload_type: Type of workload ("cpu", "io", "mixed", "gpu")
         total_cores: Total logical CPU cores available
         max_workers: Optional limit on number of workers
 
@@ -36,13 +64,13 @@ def decide_topology(
     # "auto" should be resolved to a concrete type before calling decide_topology
     if workload_type == "auto":
         raise InvalidConfigurationError(
-            "workload_type='auto' must be resolved to 'cpu', 'io', or 'mixed' before "
+            "workload_type='auto' must be resolved to 'cpu', 'io', 'mixed', or 'gpu' before "
             "decide_topology() is called. Pass a dataset via ds= to setup_dask_client(), "
             "or call infer_workload_type(ds) yourself and pass the result explicitly."
         )
-    if workload_type not in {"cpu", "io", "mixed"}:
+    if workload_type not in {"cpu", "io", "mixed", "gpu"}:
         raise InvalidConfigurationError(
-            f"workload_type must be 'cpu', 'io', or 'mixed', got '{workload_type}'"
+            f"workload_type must be 'cpu', 'io', 'mixed', or 'gpu', got '{workload_type}'"
         )
 
     # Validate total_cores
@@ -70,6 +98,30 @@ def decide_topology(
         n_workers = 1
         # Choose thread count: 8-16 threads, but clamped by available cores
         threads_per_worker = min(16, max(4, math.ceil(total_cores / 2)))
+
+    elif workload_type == "gpu":
+        # GPU workload: one worker process per GPU, several CPU threads each.
+        # CuPy / RAPIDS operations are single-threaded on the GPU but use CPU
+        # threads for data loading and preprocessing.
+        n_gpus = _count_gpus()
+        if n_gpus == 0:
+            logger.warning(
+                "workload_type='gpu' requested but no CUDA-capable GPUs detected. "
+                "Falling back to a single CPU worker. Install CuPy or set "
+                "CUDA_VISIBLE_DEVICES to specify GPUs."
+            )
+            # Graceful fallback: single-process multi-thread (like "io")
+            processes = False
+            n_workers = 1
+            threads_per_worker = min(16, max(4, math.ceil(total_cores / 2)))
+        else:
+            # One process per GPU; allocate CPU threads evenly across GPUs
+            n_workers_requested = n_gpus if max_workers is None else min(max_workers, n_gpus)
+            n_workers = max(1, n_workers_requested)
+            processes = True
+            # Divide available cores across GPU workers (min 2, max 8)
+            threads_per_worker = max(2, min(8, total_cores // n_workers))
+        logger.debug("GPU topology", n_gpus=n_gpus, n_workers=n_workers)
 
     else:  # workload_type == "mixed"
         # Mixed workload: moderate number of processes with 2 threads each
@@ -124,7 +176,9 @@ def validate_topology(topology: TopologySpec, total_cores: int) -> None:
         )
 
     # Warn about configurations that might be suboptimal
-    if topology.processes and topology.threads_per_worker > 4:
+    # GPU topology legitimately uses processes=True with multiple threads per worker
+    is_gpu = topology.workload_type == "gpu"
+    if topology.processes and topology.threads_per_worker > 4 and not is_gpu:
         logger.warning(
             "High threads_per_worker with multiple processes — consider workload_type='io'",
             threads_per_worker=topology.threads_per_worker,

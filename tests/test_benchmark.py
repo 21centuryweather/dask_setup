@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers — lightweight stubs so tests run without a real Dask cluster
@@ -292,7 +289,7 @@ class TestOperationHelpers:
         from dask_setup.benchmark import _resolve_operation
 
         try:
-            import xarray as xr  # noqa: F401
+            import xarray as xr
         except ImportError:
             pytest.skip("xarray not installed")
 
@@ -364,13 +361,19 @@ class TestCLIBenchmark:
 
         parser = create_parser()
         # Parse with benchmark subcommand and check defaults exist
-        args = parser.parse_args([
-            "benchmark",
-            "--profile", "development",
-            "--operation", "mean",
-            "--size", "tiny",
-            "--repeats", "1",
-        ])
+        args = parser.parse_args(
+            [
+                "benchmark",
+                "--profile",
+                "development",
+                "--operation",
+                "mean",
+                "--size",
+                "tiny",
+                "--repeats",
+                "1",
+            ]
+        )
         assert args.profile == "development"
         assert args.operation == "mean"
         assert args.size == "tiny"
@@ -388,8 +391,8 @@ class TestCLIBenchmark:
 
     def test_benchmark_invalid_operation(self):
         """Invalid operation should cause argparse to error."""
+
         from dask_setup.cli import create_parser
-        import io
 
         parser = create_parser()
         with pytest.raises(SystemExit):
@@ -397,9 +400,10 @@ class TestCLIBenchmark:
 
     def test_cmd_benchmark_calls_run_synthetic(self):
         """cmd_benchmark should delegate to run_synthetic_benchmark."""
+        import argparse
+
         from dask_setup.benchmark import SyntheticBenchmarkResult
         from dask_setup.cli import cmd_benchmark
-        import argparse
 
         mock_result = SyntheticBenchmarkResult(
             profile_name="development",
@@ -421,7 +425,9 @@ class TestCLIBenchmark:
             repeats=1,
         )
 
-        with patch("dask_setup.benchmark.run_synthetic_benchmark", return_value=mock_result) as mock_fn:
+        with patch(
+            "dask_setup.benchmark.run_synthetic_benchmark", return_value=mock_result
+        ) as mock_fn:
             rc = cmd_benchmark(args)
             assert rc == 0
             mock_fn.assert_called_once_with(
@@ -434,8 +440,9 @@ class TestCLIBenchmark:
 
     def test_cmd_benchmark_handles_exception(self, capsys):
         """cmd_benchmark should return non-zero on error."""
-        from dask_setup.cli import cmd_benchmark
         import argparse
+
+        from dask_setup.cli import cmd_benchmark
 
         args = argparse.Namespace(
             profile="nonexistent_profile",
@@ -462,7 +469,7 @@ class TestCountTasks:
         from dask_setup.benchmark import _count_tasks
 
         try:
-            import dask.array as da  # noqa: F401
+            import dask.array as da
         except ImportError:
             pytest.skip("dask not installed")
 

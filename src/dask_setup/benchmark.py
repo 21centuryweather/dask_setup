@@ -41,8 +41,9 @@ from __future__ import annotations
 
 import statistics
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from dask.distributed import Client
@@ -232,7 +233,7 @@ class ScalingResult:
             "-" * 54,
         ]
         for r, nw, sp, eff in zip(
-            self.results, self.worker_counts, self.speedups, self.efficiencies
+            self.results, self.worker_counts, self.speedups, self.efficiencies, strict=False
         ):
             lines.append(
                 f"{nw:>8}  {r.wall_time_seconds:>10.2f}  {sp:>8.2f}x  "
@@ -249,13 +250,12 @@ class ScalingResult:
             import pandas as pd
         except ImportError as e:
             raise ImportError(
-                "ScalingResult.to_dataframe() requires pandas. "
-                "Install with: pip install pandas"
+                "ScalingResult.to_dataframe() requires pandas. Install with: pip install pandas"
             ) from e
 
         records = []
         for r, nw, sp, eff in zip(
-            self.results, self.worker_counts, self.speedups, self.efficiencies
+            self.results, self.worker_counts, self.speedups, self.efficiencies, strict=False
         ):
             records.append(
                 {
@@ -346,7 +346,7 @@ class ChunkImpactResult:
             f"{'Chunks':^36}  {'Wall (s)':>10}  {'Mem GiB':>8}  {'Tasks/s':>8}",
             "-" * 68,
         ]
-        for r, cs in zip(self.results, self.chunk_sizes):
+        for r, cs in zip(self.results, self.chunk_sizes, strict=False):
             chunk_str = str(cs)[:34]
             lines.append(
                 f"{chunk_str:<36}  {r.wall_time_seconds:>10.2f}  "
@@ -364,12 +364,11 @@ class ChunkImpactResult:
             import pandas as pd
         except ImportError as e:
             raise ImportError(
-                "ChunkImpactResult.to_dataframe() requires pandas. "
-                "Install with: pip install pandas"
+                "ChunkImpactResult.to_dataframe() requires pandas. Install with: pip install pandas"
             ) from e
 
         records = []
-        for r, cs in zip(self.results, self.chunk_sizes):
+        for r, cs in zip(self.results, self.chunk_sizes, strict=False):
             row = {
                 "chunks": str(cs),
                 "wall_time_s": r.wall_time_seconds,
@@ -437,7 +436,7 @@ class ChunkImpactResult:
 def _measure_one(
     ds: Any,
     operation_fn: Callable[[Any], Any],
-    client: "Client",
+    client: Client,
     repeats: int,
     warmup: bool,
     name: str,
@@ -534,9 +533,9 @@ def _measure_one(
 
 
 def benchmark_config(
-    configs: "dict[str, DaskSetupConfig] | list[DaskSetupConfig] | DaskSetupConfig",
+    configs: dict[str, DaskSetupConfig] | list[DaskSetupConfig] | DaskSetupConfig,
     ds: Any,
-    operation: "Callable[[Any], Any] | str" = "mean",
+    operation: Callable[[Any], Any] | str = "mean",
     *,
     repeats: int = 1,
     warmup: bool = False,
@@ -673,10 +672,10 @@ def benchmark_config(
 
 def scaling_analysis(
     ds: Any,
-    operation: "Callable[[Any], Any] | str" = "mean",
+    operation: Callable[[Any], Any] | str = "mean",
     worker_counts: Sequence[int] = (1, 2, 4, 8),
     *,
-    base_config: "DaskSetupConfig | None" = None,
+    base_config: DaskSetupConfig | None = None,
     repeats: int = 1,
     warmup: bool = False,
     fallback_on_detection_failure: bool = True,
@@ -788,7 +787,7 @@ def scaling_analysis(
 
     speedups = []
     efficiencies = []
-    for r, nw in zip(raw_results, counts):
+    for r, nw in zip(raw_results, counts, strict=False):
         if r.wall_time_seconds and r.wall_time_seconds == r.wall_time_seconds:
             sp = baseline_time / r.wall_time_seconds
         else:
@@ -823,8 +822,8 @@ def scaling_analysis(
 
 def chunk_impact(
     ds: Any,
-    client: "Client",
-    operation: "Callable[[Any], Any] | str" = "mean",
+    client: Client,
+    operation: Callable[[Any], Any] | str = "mean",
     chunk_sizes: list[dict[str, int]] | None = None,
     *,
     auto_chunks: bool = True,
@@ -918,7 +917,7 @@ def chunk_impact(
     # Recommended = fastest valid run
     valid = [
         (r, cs)
-        for r, cs in zip(raw_results, chunk_sizes)
+        for r, cs in zip(raw_results, chunk_sizes, strict=False)
         if r.wall_time_seconds == r.wall_time_seconds  # not nan
     ]
     if valid:
@@ -1074,9 +1073,7 @@ def run_synthetic_benchmark(
     from .reporting import cluster_report
 
     if ds_size not in _SYNTHETIC_SHAPES:
-        raise ValueError(
-            f"Unknown ds_size {ds_size!r}. Valid: {sorted(_SYNTHETIC_SHAPES)}"
-        )
+        raise ValueError(f"Unknown ds_size {ds_size!r}. Valid: {sorted(_SYNTHETIC_SHAPES)}")
 
     shape = _SYNTHETIC_SHAPES[ds_size]
     chunks = _SYNTHETIC_CHUNKS[ds_size]
@@ -1097,8 +1094,7 @@ def run_synthetic_benchmark(
     }
     if operation not in da_ops:
         raise ValueError(
-            f"Unknown operation {operation!r} for synthetic benchmark. "
-            f"Valid: {sorted(da_ops)}"
+            f"Unknown operation {operation!r} for synthetic benchmark. Valid: {sorted(da_ops)}"
         )
     op_fn = da_ops[operation]
 
@@ -1117,8 +1113,7 @@ def run_synthetic_benchmark(
     profile = manager.get_profile(profile_name)
     if profile is None:
         raise ValueError(
-            f"Profile {profile_name!r} not found. "
-            f"Available: {sorted(manager.list_profiles())}"
+            f"Profile {profile_name!r} not found. Available: {sorted(manager.list_profiles())}"
         )
 
     client = cluster_obj = None

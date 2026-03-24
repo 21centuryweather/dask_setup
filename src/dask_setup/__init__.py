@@ -8,16 +8,27 @@ A drop-in convenience wrapper around dask.distributed.LocalCluster + Client that
 - Provides SSH tunnel commands for dashboard access on HPC systems
 """
 
+from .callbacks import register_worker_callbacks
 from .client import DaskClientContext, setup_dask_client
 from .config import DaskSetupConfig
 from .config_manager import PROFILE_FORMAT_VERSION, ConfigManager
 from .environment import get_environment_type, is_jupyter
 from .logging import configure_logging, get_logger
+
+# Multi-node support (v2.0) — dask-jobqueue integration
+from .multinode import (
+    MultiNodeConfig,
+    SharedTempDir,
+    detect_cluster_mode,
+    generate_pbs_script,
+    generate_slurm_script,
+    setup_pbs_cluster,
+    setup_slurm_cluster,
+)
 from .reporting import ClusterReport, cluster_report
-from .workload import infer_workload_type
-from .tune import MemoryTuneResult, tune_memory_thresholds
-from .callbacks import register_worker_callbacks
 from .schema import PROFILE_SCHEMA
+from .tune import MemoryTuneResult, tune_memory_thresholds
+from .workload import infer_workload_type
 
 # Performance benchmarking (v1.8) — optional but always available in practice
 try:
@@ -49,8 +60,7 @@ except ImportError:
 
     def chunk_impact(*args, **kwargs):  # type: ignore[misc]
         raise ImportError(
-            "chunk_impact requires dask.distributed. "
-            "Install with: pip install dask[distributed]"
+            "chunk_impact requires dask.distributed. Install with: pip install dask[distributed]"
         )
 
     def run_synthetic_benchmark(*args, **kwargs):  # type: ignore[misc]
@@ -97,14 +107,12 @@ except ImportError:
 
     def recommend_chunks(*args, **kwargs):
         raise ImportError(
-            "recommend_chunks requires xarray and numpy. "
-            "Install with: pip install xarray numpy"
+            "recommend_chunks requires xarray and numpy. Install with: pip install xarray numpy"
         )
 
     def validate_chunks(*args, **kwargs):
         raise ImportError(
-            "validate_chunks requires xarray and numpy. "
-            "Install with: pip install xarray numpy"
+            "validate_chunks requires xarray and numpy. Install with: pip install xarray numpy"
         )
 
     class ChunkRecommendation:  # type: ignore[no-redef]
@@ -127,8 +135,7 @@ except ImportError:
 
     def rechunk_dataset(*args, **kwargs):
         raise ImportError(
-            "rechunk_dataset requires rechunker and zarr. "
-            "Install with: pip install rechunker zarr"
+            "rechunk_dataset requires rechunker and zarr. Install with: pip install rechunker zarr"
         )
 
 
@@ -273,7 +280,7 @@ except ImportError:
         )
 
 
-__version__ = "1.8.0"
+__version__ = "2.0.0"
 
 __all__ = [
     # Core API — always available
@@ -315,6 +322,14 @@ __all__ = [
     # Configuration ecosystem (v1.7)
     "PROFILE_FORMAT_VERSION",
     "PROFILE_SCHEMA",
+    # Multi-node support (v2.0)
+    "MultiNodeConfig",
+    "SharedTempDir",
+    "detect_cluster_mode",
+    "setup_pbs_cluster",
+    "setup_slurm_cluster",
+    "generate_pbs_script",
+    "generate_slurm_script",
     # Performance benchmarking (v1.8)
     "BenchmarkResult",
     "ScalingResult",

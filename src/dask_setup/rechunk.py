@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from .logging import get_logger
 
 if TYPE_CHECKING:
-    from dask.distributed import Client
+    pass
 
 logger = get_logger("rechunk")
 
@@ -122,8 +122,7 @@ def rechunk_dataset(
         import xarray as xr
     except ImportError as exc:
         raise ImportError(
-            "rechunk_dataset requires xarray.\n"
-            "Install with: pip install xarray"
+            "rechunk_dataset requires xarray.\nInstall with: pip install xarray"
         ) from exc
 
     # --- Path setup ----------------------------------------------------------
@@ -138,9 +137,7 @@ def rechunk_dataset(
 
     if output_path is None:
         output_path = dask_tmp / f"rechunked_{timestamp}.zarr"
-        logger.debug(
-            "No output_path provided; using temp location", path=str(output_path)
-        )
+        logger.debug("No output_path provided; using temp location", path=str(output_path))
 
     output_path = Path(output_path)
     temp_store_path = dask_tmp / f"rechunk_tmp_{timestamp}.zarr"

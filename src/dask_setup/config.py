@@ -69,7 +69,7 @@ class DaskSetupConfig:
     _skip_validation: bool = field(default=False, init=False)
 
     # Validation constraints
-    VALID_WORKLOAD_TYPES: ClassVar[set[str]] = {"cpu", "io", "mixed", "auto"}
+    VALID_WORKLOAD_TYPES: ClassVar[set[str]] = {"cpu", "io", "mixed", "auto", "gpu"}
     MIN_RESERVE_MEM: ClassVar[float] = 1.0
     MAX_RESERVE_MEM: ClassVar[float] = 1000.0
     VALID_COMPRESSION_ALGORITHMS: ClassVar[set[str]] = {

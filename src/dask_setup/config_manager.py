@@ -224,9 +224,7 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
             try:
                 return self.load_profile_from_file(site_file)
             except Exception as e:
-                raise InvalidConfigurationError(
-                    f"Failed to load site profile '{name}': {e}"
-                ) from e
+                raise InvalidConfigurationError(f"Failed to load site profile '{name}': {e}") from e
 
         # Built-in profiles
         if name in self.builtin_profiles:
@@ -464,20 +462,14 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
             with urllib.request.urlopen(req, timeout=30) as response:
                 content = response.read().decode("utf-8")
         except urllib.error.URLError as e:
-            raise InvalidConfigurationError(
-                f"Could not fetch profile from {url!r}: {e}"
-            ) from e
+            raise InvalidConfigurationError(f"Could not fetch profile from {url!r}: {e}") from e
         except Exception as e:
-            raise InvalidConfigurationError(
-                f"Unexpected error fetching {url!r}: {e}"
-            ) from e
+            raise InvalidConfigurationError(f"Unexpected error fetching {url!r}: {e}") from e
 
         try:
             data = yaml.safe_load(content)
         except yaml.YAMLError as e:
-            raise InvalidConfigurationError(
-                f"Invalid YAML returned from {url!r}: {e}"
-            ) from e
+            raise InvalidConfigurationError(f"Invalid YAML returned from {url!r}: {e}") from e
 
         if not isinstance(data, dict):
             raise InvalidConfigurationError(
@@ -522,7 +514,7 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
 
         return PROFILE_SCHEMA
 
-    def auto_select_profile(self, resources: "ResourceSpec | None" = None) -> str:
+    def auto_select_profile(self, resources: ResourceSpec | None = None) -> str:
         """Select the most appropriate builtin profile for the current environment.
 
         Inspects PBS/SLURM environment variables, detected resources, and the

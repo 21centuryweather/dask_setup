@@ -15,6 +15,7 @@ from .config_manager import ConfigManager
 from .dashboard import print_dashboard_info
 from .exceptions import InsufficientResourcesError
 from .logging import get_logger
+from .multinode import MultiNodeConfig, detect_cluster_mode
 from .resources import detect_resources
 from .tempdir import create_dask_temp_dir
 from .topology import decide_topology, validate_topology
@@ -30,6 +31,7 @@ logger = get_logger("client")
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _compute_smart_reserve_default() -> float:
     """Compute a sensible reserve_mem_gb default based on available system RAM.
@@ -171,6 +173,7 @@ def _resolve_configuration(
 # Public API — context manager
 # ---------------------------------------------------------------------------
 
+
 class DaskClientContext:
     """Context manager wrapper for :func:`setup_dask_client`.
 
@@ -261,6 +264,7 @@ class DaskClientContext:
 # When ds is an xarray object, the return is a 4-tuple that also contains the
 # computed chunk dictionary.
 
+
 @overload
 def setup_dask_client(
     workload_type: str = ...,
@@ -276,6 +280,8 @@ def setup_dask_client(
     ds: None = ...,
     fallback_on_detection_failure: bool = ...,
     adaptive_memory: bool = ...,
+    mode: str = ...,
+    multi_node_config: MultiNodeConfig | None = ...,
 ) -> tuple[Client, LocalCluster, str]: ...
 
 
@@ -294,6 +300,8 @@ def setup_dask_client(
     ds: xr.Dataset | xr.DataArray = ...,
     fallback_on_detection_failure: bool = ...,
     adaptive_memory: bool = ...,
+    mode: str = ...,
+    multi_node_config: MultiNodeConfig | None = ...,
 ) -> tuple[Client, LocalCluster, str, dict[str, int]]: ...
 
 
@@ -311,6 +319,8 @@ def setup_dask_client(
     ds: Any = None,  # xr.Dataset | xr.DataArray | None
     fallback_on_detection_failure: bool = False,
     adaptive_memory: bool = False,
+    mode: str = "auto",
+    multi_node_config: MultiNodeConfig | None = None,
 ) -> tuple[Client, LocalCluster, str] | tuple[Client, LocalCluster, str, dict[str, int]]:
     """Create a single-node Dask LocalCluster tuned for HPC login/compute nodes.
 
@@ -370,6 +380,22 @@ def setup_dask_client(
         and tightens the worker ``memory.target`` / ``memory.spill`` thresholds
         slightly, giving workers more head-room from the start.  Default
         ``False``.
+    mode : {"auto", "local", "pbs", "slurm"}
+        Backend selection.
+
+        - ``"local"`` — always use a single-node ``LocalCluster`` (default
+          behaviour prior to v2.0).
+        - ``"pbs"`` — launch via ``dask-jobqueue.PBSCluster``.  Requires
+          ``pip install dask-jobqueue``.
+        - ``"slurm"`` — launch via ``dask-jobqueue.SLURMCluster``.
+        - ``"auto"`` (default) — inspect the environment and choose
+          ``"pbs"`` if ``PBS_JOBID`` is set, ``"slurm"`` if
+          ``SLURM_JOB_ID`` is set, or ``"local"`` otherwise.
+    multi_node_config : MultiNodeConfig or None
+        Configuration for the multi-node backend (``mode="pbs"`` or
+        ``"slurm"``).  Ignored when ``mode="local"``.  When ``None`` and a
+        multi-node mode is selected, a default :class:`MultiNodeConfig` is
+        constructed from *workload_type*.
 
     Returns
     -------
@@ -404,14 +430,56 @@ def setup_dask_client(
         # Basic usage (3-tuple)
         client, cluster, tmp = setup_dask_client(workload_type="io")
 
+        # Basic usage (3-tuple)
+        client, cluster, tmp = setup_dask_client(workload_type="io")
+
         # With dataset — chunk validation + recommendations (4-tuple)
         ds = xr.open_zarr("era5.zarr")
         client, cluster, tmp, chunks = setup_dask_client(ds=ds, suggest_chunks=True)
         ds_opt = ds.chunk(chunks)
+
+        # Multi-node PBS — auto-detects from environment
+        client, cluster, tmp = setup_dask_client(
+            mode="pbs",
+            multi_node_config=MultiNodeConfig(
+                workers_per_node=4,
+                cores_per_worker=12,
+                mem_per_worker_gb=32.0,
+                walltime="04:00:00",
+            ),
+        )
     """
     from .environment import get_environment_type, is_jupyter
 
     env_type = get_environment_type()
+
+    # ------------------------------------------------------------------
+    # Multi-node dispatch — if mode != "local", hand off to the
+    # appropriate dask-jobqueue backend and return early.
+    # ------------------------------------------------------------------
+    resolved_mode = mode
+    if resolved_mode == "auto":
+        resolved_mode = detect_cluster_mode()
+        logger.debug("Mode auto-resolved", mode=resolved_mode)
+
+    if resolved_mode in {"pbs", "slurm"}:
+        from .multinode import setup_pbs_cluster, setup_slurm_cluster
+
+        mn_cfg = multi_node_config
+        if mn_cfg is None:
+            # Build a minimal MultiNodeConfig from whatever was passed
+            mn_cfg = MultiNodeConfig(workload_type=workload_type)
+
+        logger.info("Multi-node cluster mode", mode=resolved_mode)
+        if resolved_mode == "pbs":
+            client, cluster, shared_tmp = setup_pbs_cluster(mn_cfg)
+        else:
+            client, cluster, shared_tmp = setup_slurm_cluster(mn_cfg)
+
+        tmp_path = str(shared_tmp) if shared_tmp is not None else ""
+        # Multi-node path always returns a 3-tuple (no chunk recommendation)
+        return client, cluster, tmp_path  # type: ignore[return-value]
+
     logger.info("Starting Dask client setup", workload_type=workload_type, environment=env_type)
 
     # --- Profile auto-selection -----------------------------------------
@@ -423,6 +491,7 @@ def setup_dask_client(
         except Exception:
             _pre_resources = None
         from .config_manager import ConfigManager as _CM
+
         profile = _CM().auto_select_profile(_pre_resources)
         logger.info("Auto-selected profile", profile=profile)
 
@@ -535,9 +604,7 @@ def setup_dask_client(
     # False → show warnings and above (logging.WARNING), which is a reasonable HPC default
     import logging as _stdlib_logging
 
-    silence_logs_level = (
-        _stdlib_logging.ERROR if config.silence_logs else _stdlib_logging.WARNING
-    )
+    silence_logs_level = _stdlib_logging.ERROR if config.silence_logs else _stdlib_logging.WARNING
 
     cluster = create_cluster(
         topology=topology,

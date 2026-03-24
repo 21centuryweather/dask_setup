@@ -107,7 +107,7 @@ class ParquetRecommendation:
 
 def recommend_parquet_chunks(
     df: Any,
-    client: "Client | None" = None,
+    client: Client | None = None,
     path_or_url: str | None = None,
     target_partition_mb: tuple[float, float] = _DEFAULT_PARTITION_MB,
     compression: str = "auto",
@@ -151,9 +151,7 @@ def recommend_parquet_chunks(
     # ------------------------------------------------------------------
     if storage_location == "auto":
         if path_or_url:
-            if any(
-                path_or_url.startswith(p) for p in ["s3://", "gs://", "azure://", "abfs://"]
-            ):
+            if any(path_or_url.startswith(p) for p in ["s3://", "gs://", "azure://", "abfs://"]):
                 storage_location = "cloud"
             elif any(path_or_url.startswith(p) for p in ["http://", "https://", "ftp://"]):
                 storage_location = "network"
@@ -309,9 +307,7 @@ def _build_storage_options(path_or_url: str, storage_location: str) -> dict[str,
                 "default_cache_type": "readahead",
             }
         )
-    elif path_or_url.startswith("gs://"):
-        options.update({"default_cache_type": "readahead"})
-    elif path_or_url.startswith(("http://", "https://")):
+    elif path_or_url.startswith("gs://") or path_or_url.startswith(("http://", "https://")):
         options.update({"default_cache_type": "readahead"})
     return options
 
@@ -335,8 +331,5 @@ def _print_report(rec: ParquetRecommendation, storage_location: str) -> None:
             print(f"  • {w}")
 
     print("\n Usage:")
-    print(
-        f"   df.to_parquet(path, compression='{rec.compression}', "
-        f"write_index=False)"
-    )
-    print(f"   # Or repartition first: df.repartition(npartitions=...)")
+    print(f"   df.to_parquet(path, compression='{rec.compression}', write_index=False)")
+    print("   # Or repartition first: df.repartition(npartitions=...)")

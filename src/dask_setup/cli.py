@@ -316,8 +316,7 @@ def cmd_import_profile(args: argparse.Namespace) -> int:
             existing = manager.get_profile(profile.name)
             if existing is not None and not existing.builtin and not args.force:
                 print(
-                    f" A profile named '{profile.name}' already exists. "
-                    "Use --force to overwrite.",
+                    f" A profile named '{profile.name}' already exists. Use --force to overwrite.",
                     file=sys.stderr,
                 )
                 return 1
@@ -352,6 +351,65 @@ def cmd_show_schema(args: argparse.Namespace) -> int:
             return 1
     else:
         print(output)
+
+    return 0
+
+
+def cmd_submit(args: argparse.Namespace) -> int:
+    """Generate a PBS or SLURM job script from a MultiNodeConfig."""
+    try:
+        from .multinode import MultiNodeConfig, generate_pbs_script, generate_slurm_script
+    except ImportError as e:
+        print(f" submit requires dask_setup.multinode: {e}", file=sys.stderr)
+        return 1
+
+    # Build MultiNodeConfig from CLI flags
+    try:
+        extra_directives = args.extra_directive or []
+        cfg = MultiNodeConfig(
+            workload_type=args.workload_type,
+            workers_per_node=args.workers_per_node,
+            cores_per_worker=args.cores_per_worker,
+            mem_per_worker_gb=args.mem_per_worker_gb,
+            walltime=args.walltime,
+            queue=args.queue,
+            project=args.project or None,
+            job_extra_directives=extra_directives,
+            n_nodes=args.n_nodes,
+            shared_tmp_dir=args.shared_tmp_dir or None,
+        )
+    except Exception as e:
+        print(f" Invalid configuration: {e}", file=sys.stderr)
+        return 1
+
+    scheduler = args.scheduler.lower()
+    if scheduler == "pbs":
+        script = generate_pbs_script(
+            cfg,
+            script_path=args.script,
+            python_executable=args.python,
+        )
+    elif scheduler == "slurm":
+        script = generate_slurm_script(
+            cfg,
+            script_path=args.script,
+            python_executable=args.python,
+        )
+    else:
+        print(f" Unknown scheduler '{scheduler}'. Use 'pbs' or 'slurm'.", file=sys.stderr)
+        return 1
+
+    if args.output:
+        try:
+            import pathlib
+
+            pathlib.Path(args.output).write_text(script)
+            print(f" Job script written to {args.output}")
+        except OSError as e:
+            print(f" Could not write script: {e}", file=sys.stderr)
+            return 1
+    else:
+        print(script, end="")
 
     return 0
 
@@ -435,11 +493,13 @@ def create_parser() -> argparse.ArgumentParser:
         help="HTTP/HTTPS URL or local file path of a YAML profile to import",
     )
     import_parser.add_argument(
-        "--name", "-n",
+        "--name",
+        "-n",
         help="Override the profile name (default: use the name field from the YAML)",
     )
     import_parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Overwrite an existing profile of the same name",
     )
     import_parser.set_defaults(func=cmd_import_profile)
@@ -450,7 +510,8 @@ def create_parser() -> argparse.ArgumentParser:
         help="Print the JSON Schema for profile YAML files",
     )
     schema_parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         help="Write schema to file instead of stdout",
     )
     schema_parser.set_defaults(func=cmd_show_schema)
@@ -461,29 +522,134 @@ def create_parser() -> argparse.ArgumentParser:
         help="Run a synthetic performance benchmark against a profile",
     )
     benchmark_parser.add_argument(
-        "--profile", "-p",
+        "--profile",
+        "-p",
         default="development",
         help="Profile name to benchmark against (default: development)",
     )
     benchmark_parser.add_argument(
-        "--operation", "-o",
+        "--operation",
+        "-o",
         default="mean",
         choices=["mean", "sum", "std", "max", "min"],
         help="Array operation to time (default: mean)",
     )
     benchmark_parser.add_argument(
-        "--size", "-s",
+        "--size",
+        "-s",
         default="small",
         choices=["tiny", "small", "medium", "large"],
         help="Synthetic dataset size (default: small)",
     )
     benchmark_parser.add_argument(
-        "--repeats", "-r",
+        "--repeats",
+        "-r",
         type=int,
         default=1,
         help="Number of timed repetitions (default: 1)",
     )
     benchmark_parser.set_defaults(func=cmd_benchmark)
+
+    # Generate job submission script (PBS or SLURM)
+    submit_parser = subparsers.add_parser(
+        "submit",
+        help="Generate a PBS or SLURM job script for a dask_setup workload",
+    )
+    submit_parser.add_argument(
+        "script",
+        help="Path to the Python script to run inside the job",
+    )
+    submit_parser.add_argument(
+        "--scheduler",
+        "-S",
+        default="pbs",
+        choices=["pbs", "slurm"],
+        help="Job scheduler to target (default: pbs)",
+    )
+    submit_parser.add_argument(
+        "--workload-type",
+        "-w",
+        default="cpu",
+        dest="workload_type",
+        choices=["cpu", "io", "mixed", "gpu"],
+        help="Worker workload type (default: cpu)",
+    )
+    submit_parser.add_argument(
+        "--workers-per-node",
+        "-W",
+        type=int,
+        default=1,
+        dest="workers_per_node",
+        help="Dask worker processes per node (default: 1)",
+    )
+    submit_parser.add_argument(
+        "--cores-per-worker",
+        "-c",
+        type=int,
+        default=1,
+        dest="cores_per_worker",
+        help="CPU cores per worker (default: 1)",
+    )
+    submit_parser.add_argument(
+        "--mem-per-worker",
+        "-m",
+        type=float,
+        default=4.0,
+        dest="mem_per_worker_gb",
+        help="RAM per worker in GiB (default: 4.0)",
+    )
+    submit_parser.add_argument(
+        "--walltime",
+        "-t",
+        default="01:00:00",
+        help="Job walltime in HH:MM:SS (default: 01:00:00)",
+    )
+    submit_parser.add_argument(
+        "--queue",
+        "-q",
+        default="normal",
+        help="Scheduler queue / partition (default: normal)",
+    )
+    submit_parser.add_argument(
+        "--project",
+        "-P",
+        default="",
+        help="Project / account code",
+    )
+    submit_parser.add_argument(
+        "--n-nodes",
+        "-N",
+        type=int,
+        default=1,
+        dest="n_nodes",
+        help="Number of nodes to request (default: 1)",
+    )
+    submit_parser.add_argument(
+        "--shared-tmp-dir",
+        default="",
+        dest="shared_tmp_dir",
+        help="Shared filesystem temp directory (Lustre/GPFS) for multi-node rechunking",
+    )
+    submit_parser.add_argument(
+        "--extra-directive",
+        "-e",
+        action="append",
+        dest="extra_directive",
+        metavar="DIRECTIVE",
+        help="Extra scheduler directive (can be repeated), e.g. '-l ngpus=1'",
+    )
+    submit_parser.add_argument(
+        "--python",
+        default="python3",
+        help="Python executable to use in the job script (default: python3)",
+    )
+    submit_parser.add_argument(
+        "--output",
+        "-o",
+        default="",
+        help="Write script to file instead of stdout",
+    )
+    submit_parser.set_defaults(func=cmd_submit)
 
     return parser
 
