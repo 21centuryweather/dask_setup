@@ -1254,3 +1254,111 @@ class TestRecommendChunksWithDomain:
 
         output = captured.getvalue()
         assert "spatial" in output.lower()
+
+
+class TestValidateChunks:
+    """Tests for validate_chunks — especially the chunk-size estimation."""
+
+    @pytest.mark.unit
+    def test_no_warnings_after_recommend_chunks(self):
+        """Recommended chunks must not trigger OOM warnings in validate_chunks.
+
+        Regression test for the bug where validate_chunks multiplied each
+        dimension's chunk size against the *full* extent of all other
+        dimensions, producing absurdly large estimates and false OOM warnings
+        for datasets that were already well-chunked.
+        """
+        import numpy as np
+        import xarray as xr
+        from dask_setup.xarray import recommend_chunks, validate_chunks
+
+        # ERA5-style 4-D dataset
+        data = np.zeros((240, 37, 181, 360), dtype="float32")
+        ds = xr.Dataset({"t": (["time", "level", "latitude", "longitude"], data)})
+
+        chunks = recommend_chunks(ds)
+        ds_chunked = ds.chunk(chunks.chunks)
+
+        # Must return no warnings — recommended chunks should be safe
+        warnings_list = validate_chunks(ds_chunked)
+        assert warnings_list == [], (
+            f"validate_chunks raised false OOM warnings after recommend_chunks:\n"
+            + "\n".join(warnings_list)
+        )
+
+    @pytest.mark.unit
+    def test_chunk_size_uses_chunk_not_full_dim(self):
+        """validate_chunks must compute chunk footprint from chunk sizes, not full dim sizes."""
+        import numpy as np
+        import xarray as xr
+        from dask_setup.xarray import validate_chunks
+
+        # Small dataset — full extents are large, but chunks are tiny
+        data = np.zeros((500, 50, 200, 400), dtype="float32")
+        ds = xr.Dataset({"v": (["time", "lev", "lat", "lon"], data)})
+
+        # Very small chunks — 1 element per dim → single chunk = 4 bytes
+        ds_chunked = ds.chunk({"time": 1, "lev": 1, "lat": 1, "lon": 1})
+
+        # With correct estimation, no dimension should warn (chunks are tiny)
+        warnings_list = validate_chunks(ds_chunked)
+        assert warnings_list == [], (
+            "Single-element chunks should never trigger OOM warnings, got:\n"
+            + "\n".join(warnings_list)
+        )
+
+    @pytest.mark.unit
+    def test_genuinely_large_chunks_still_warn(self):
+        """validate_chunks must still warn when chunks genuinely exceed worker memory."""
+        import numpy as np
+        import xarray as xr
+        from dask_setup.xarray import validate_chunks
+        from unittest.mock import patch
+
+        data = np.zeros((10, 5), dtype="float32")
+        ds = xr.Dataset({"v": (["x", "y"], data)})
+        # Chunk the whole dataset as one piece
+        ds_chunked = ds.chunk({"x": 10, "y": 5})
+
+        # Pretend the worker has only 1 KiB of memory so even a tiny chunk warns
+        tiny_worker_bytes = 1024
+        with patch(
+            "dask_setup.xarray._get_cluster_info",
+            return_value={
+                "n_workers": 1,
+                "memory_limit_bytes": tiny_worker_bytes,
+                "total_memory_bytes": tiny_worker_bytes,
+                "threads_per_worker": 1,
+            },
+        ):
+            warnings_list = validate_chunks(ds_chunked)
+
+        assert len(warnings_list) > 0, "Expected OOM warnings for tiny worker memory"
+
+    @pytest.mark.unit
+    def test_unchunked_dims_fall_back_to_full_extent(self):
+        """For dims without a chunk spec, validate_chunks should use the full dim length."""
+        import numpy as np
+        import xarray as xr
+        from dask_setup.xarray import validate_chunks
+        from unittest.mock import patch
+
+        data = np.zeros((100, 200), dtype="float32")
+        ds = xr.Dataset({"v": (["x", "y"], data)})
+        # Chunk only x; y is un-chunked (full extent of 200)
+        ds_chunked = ds.chunk({"x": 10})
+
+        # With generous worker memory, should be no warnings
+        big_worker_bytes = 16 * 1024**3  # 16 GiB
+        with patch(
+            "dask_setup.xarray._get_cluster_info",
+            return_value={
+                "n_workers": 1,
+                "memory_limit_bytes": big_worker_bytes,
+                "total_memory_bytes": big_worker_bytes,
+                "threads_per_worker": 1,
+            },
+        ):
+            warnings_list = validate_chunks(ds_chunked)
+
+        assert warnings_list == []

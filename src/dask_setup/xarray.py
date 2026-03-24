@@ -852,14 +852,27 @@ def validate_chunks(
         else:
             continue
 
-        # Estimate bytes for one chunk of this dimension
-        # (holds all other dimensions at their full size)
-        bytes_per_record = dtype_size
+        # Estimate bytes for one chunk: multiply the chunk size for every
+        # dimension, using each dimension's actual chunk size where available
+        # and falling back to the full dimension length only for un-chunked
+        # dimensions.  Using the full dimension length for ALL other dims
+        # (the previous behaviour) was wrong: it produced gigantic estimates
+        # for datasets that are already chunked on every axis.
+        chunk_bytes = dtype_size * representative_chunk
         for other_dim in main_var_dims:
-            if other_dim != dim:
-                bytes_per_record *= dims.get(other_dim, 1)
-
-        chunk_bytes = representative_chunk * bytes_per_record
+            if other_dim == dim:
+                continue
+            other_chunk_sizes = current_chunking.get(other_dim)
+            if other_chunk_sizes is None:
+                # dimension is not chunked — treat as one piece
+                other_extent = dims.get(other_dim, 1)
+            elif isinstance(other_chunk_sizes, (list, tuple)) and other_chunk_sizes:
+                other_extent = max(other_chunk_sizes)
+            elif isinstance(other_chunk_sizes, int):
+                other_extent = other_chunk_sizes
+            else:
+                other_extent = dims.get(other_dim, 1)
+            chunk_bytes *= other_extent
         chunk_mb = chunk_bytes / (1024 * 1024)
 
         if chunk_bytes > max_chunk_bytes:
