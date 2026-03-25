@@ -750,9 +750,26 @@ def scaling_analysis(
     if base_config is None:
         base_config = DaskSetupConfig(fallback_on_detection_failure=True)
 
+    # Use tqdm for progress if available (works in both terminals and Jupyter).
+    # tqdm.auto automatically picks the right bar type (notebook vs terminal).
+    try:
+        from tqdm.auto import tqdm as _tqdm
+
+        count_iter = _tqdm(counts, desc="scaling sweep", unit="config")
+    except ImportError:
+        count_iter = counts  # type: ignore[assignment]
+
     raw_results: list[BenchmarkResult] = []
 
-    for nw in counts:
+    for nw in count_iter:
+        # Show live status so notebook users know what's running right now.
+        # tqdm will show this as a postfix label; without tqdm it's a plain print.
+        _status = f"workers={nw} ({len(raw_results) + 1}/{len(counts)})"
+        try:
+            count_iter.set_postfix_str(_status)  # type: ignore[union-attr]
+        except AttributeError:
+            print(f"[scaling_analysis] running {_status}…", flush=True)
+
         # Clone config with this worker count
         cfg_dict = base_config.to_dict()
         cfg_dict["max_workers"] = nw
@@ -823,10 +840,18 @@ def scaling_analysis(
     if plot:
         fig = scaling.plot()
         if fig is not None:
-            with contextlib.suppress(Exception):
-                import matplotlib.pyplot as plt
+            # In Jupyter, use IPython's display() so the figure renders inline
+            # in the cell output rather than via plt.show() which can misbehave
+            # in some notebook backends.
+            try:
+                from IPython.display import display as _ipy_display
 
-                plt.show()
+                _ipy_display(fig)
+            except ImportError:
+                with contextlib.suppress(Exception):
+                    import matplotlib.pyplot as plt
+
+                    plt.show()
 
     return scaling
 
@@ -902,9 +927,25 @@ def chunk_impact(
             _generate_auto_chunks(dims) if auto_chunks and dims else [{}]
         )  # single run with no rechunking
 
+    # Use tqdm for progress if available (works in both terminals and Jupyter).
+    # tqdm.auto automatically picks the right bar type (notebook vs terminal).
+    try:
+        from tqdm.auto import tqdm as _tqdm
+
+        chunk_iter = _tqdm(chunk_sizes, desc="chunk sweep", unit="config")
+    except ImportError:
+        chunk_iter = chunk_sizes  # type: ignore[assignment]
+
     raw_results: list[BenchmarkResult] = []
 
-    for cs in chunk_sizes:
+    for cs in chunk_iter:
+        # Show live status so notebook users know what's running right now.
+        _status = f"{cs} ({len(raw_results) + 1}/{len(chunk_sizes)})"
+        try:
+            chunk_iter.set_postfix_str(_status)  # type: ignore[union-attr]
+        except AttributeError:
+            print(f"[chunk_impact] running {_status}…", flush=True)
+
         errors: list[str] = []
         ds_chunked = ds
 
@@ -950,10 +991,18 @@ def chunk_impact(
         first_dim = next(iter(dims), None)
         fig = impact.plot(dim=first_dim)
         if fig is not None:
-            with contextlib.suppress(Exception):
-                import matplotlib.pyplot as plt
+            # In Jupyter, use IPython's display() so the figure renders inline
+            # in the cell output rather than via plt.show() which can misbehave
+            # in some notebook backends.
+            try:
+                from IPython.display import display as _ipy_display
 
-                plt.show()
+                _ipy_display(fig)
+            except ImportError:
+                with contextlib.suppress(Exception):
+                    import matplotlib.pyplot as plt
+
+                    plt.show()
 
     return impact
 
