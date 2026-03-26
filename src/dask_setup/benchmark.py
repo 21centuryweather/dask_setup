@@ -701,15 +701,16 @@ def scaling_analysis(
     repeats: int = 1,
     warmup: bool = False,
     fallback_on_detection_failure: bool = True,
+    mode: str = "local",
     plot: bool = False,
     verbose: bool = False,
 ) -> ScalingResult:
     """Measure parallel scaling across different worker counts.
 
-    For each entry in *worker_counts*, a fresh cluster is created with
-    ``max_workers`` set to that count and the operation is timed.  The
-    resulting :class:`ScalingResult` includes speedup and efficiency
-    relative to the single-worker baseline.
+    For each entry in *worker_counts*, a fresh **local** cluster is created
+    with ``max_workers`` set to that count and the operation is timed.  The
+    resulting :class:`ScalingResult` includes speedup and efficiency relative
+    to the single-worker baseline.
 
     Parameters
     ----------
@@ -730,6 +731,13 @@ def scaling_analysis(
         Run one un-timed warmup pass before timing.
     fallback_on_detection_failure:
         Passed to :func:`~dask_setup.client.setup_dask_client`.
+    mode:
+        Cluster mode passed to :func:`~dask_setup.client.setup_dask_client`.
+        Defaults to ``"local"`` so that the sweep always uses a
+        ``LocalCluster`` on the current node — this prevents auto-detection
+        from dispatching to PBS/SLURM and submitting child scheduler jobs,
+        which would time out and produce NaN results.  Pass ``"auto"`` only
+        if you specifically want multi-node dispatch for each sweep step.
     plot:
         If ``True``, call :meth:`ScalingResult.plot` and display the figure
         (requires matplotlib).
@@ -785,6 +793,7 @@ def scaling_analysis(
             client, cluster, _tmp = setup_dask_client(
                 config=cfg,
                 fallback_on_detection_failure=fallback_on_detection_failure,
+                mode=mode,
                 dashboard=False,
             )
             result = _measure_one(
