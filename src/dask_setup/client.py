@@ -71,6 +71,7 @@ def _resolve_configuration(
     adaptive: bool = False,
     min_workers: int | None = None,
     suggest_chunks: bool = False,
+    input_config: DaskSetupConfig | None = None,
 ) -> DaskSetupConfig:
     """Resolve final configuration from a profile and explicit parameters.
 
@@ -106,8 +107,13 @@ def _resolve_configuration(
     )
     logger.debug("Configuration defaults set", reserve_mem_gb=defaults.reserve_mem_gb)
 
-    # Resolve the base configuration: load profile if specified
-    base_config = None
+    # Resolve the base configuration.
+    # Priority (lowest → highest): defaults < input_config < profile < explicit params.
+    # input_config is a pre-built DaskSetupConfig passed directly by the caller
+    # (e.g. from scaling_analysis / benchmark_config).  It sits above the library
+    # defaults but below any named profile so that profiles can still override it,
+    # and below explicit keyword arguments so those always win.
+    base_config = input_config  # may be None
 
     if profile is not None:
         manager = ConfigManager()
@@ -145,7 +151,7 @@ def _resolve_configuration(
 
     explicit_config = DaskSetupConfig(**explicit_params) if explicit_params else None
 
-    # Merge configurations: defaults < base_config < explicit overrides
+    # Merge configurations: defaults < input_config < profile < explicit overrides
     final_config = defaults
     if base_config:
         final_config = final_config.merge_with(base_config)
@@ -496,8 +502,10 @@ def setup_dask_client(
         profile = _CM().auto_select_profile(_pre_resources)
         logger.info("Auto-selected profile", profile=profile)
 
-    # Load and merge configuration
-    # Use explicit default for reserve_mem_gb if not provided
+    # Load and merge configuration.
+    # Save the caller-supplied config object before the local variable is
+    # rebound by _resolve_configuration so it can be used as the base layer.
+    _input_config = config
     resolved_reserve_mem = reserve_mem_gb if reserve_mem_gb is not None else 50.0
 
     config = _resolve_configuration(
@@ -510,6 +518,7 @@ def setup_dask_client(
         adaptive=adaptive,
         min_workers=min_workers,
         suggest_chunks=suggest_chunks,
+        input_config=_input_config,
     )
 
     # Apply additional config-level settings that don't go through _resolve_configuration

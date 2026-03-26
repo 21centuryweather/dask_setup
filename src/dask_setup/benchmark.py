@@ -791,6 +791,12 @@ def scaling_analysis(
 
         try:
             client, cluster, _tmp = setup_dask_client(
+                # Pass per-run values as explicit kwargs so they are
+                # treated as intentional overrides by _resolve_configuration
+                # and cannot be shadowed by the config= default-detection logic.
+                workload_type=cfg.workload_type,
+                max_workers=nw,
+                reserve_mem_gb=cfg.reserve_mem_gb,
                 config=cfg,
                 fallback_on_detection_failure=fallback_on_detection_failure,
                 mode=mode,
