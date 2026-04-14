@@ -14,9 +14,9 @@ HPC-tuned Dask helpers for **NCI Gadi** and other PBS/SLURM systems. Wraps `dask
 from dask_setup import setup_dask_client
 
 # Pick a workload type and go
-client, cluster, dask_tmp = setup_dask_client("cpu")   # heavy compute
-client, cluster, dask_tmp = setup_dask_client("io")    # heavy file I/O
-client, cluster, dask_tmp = setup_dask_client("mixed") # both
+client, cluster, dask_tmp = setup_dask_client(mode="interactive", workload_type="cpu")   # heavy compute
+client, cluster, dask_tmp = setup_dask_client(mode="interactive", workload_type="io")    # heavy file I/O
+client, cluster, dask_tmp = setup_dask_client(mode="interactive", workload_type="mixed") # both
 ```
 
 `dask_tmp` is the path to the spill/temp directory (on `$PBS_JOBFS` if available). Pass it to Rechunker, Zarr, or anywhere else you want fast local I/O.
