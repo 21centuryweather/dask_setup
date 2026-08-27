@@ -1,10 +1,18 @@
 # dask_setup
 
-[![CI](https://github.com/21centuryweather/dask_setup/workflows/CI/badge.svg)](https://github.com/21centuryweather/dask_setup/actions)
+[![CI](https://github.com/21centuryweather/dask_setup/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/21centuryweather/dask_setup/actions/workflows/ci.yml)
+[![Release](https://github.com/21centuryweather/dask_setup/actions/workflows/publish-to-pypi.yml/badge.svg)](https://github.com/21centuryweather/dask_setup/actions/workflows/publish-to-pypi.yml)
+[![PyPI](https://img.shields.io/pypi/v/dask_setup.svg)](https://pypi.org/project/dask_setup/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://pypi.org/project/dask_setup/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 HPC-tuned Dask helpers for **NCI Gadi** and other PBS/SLURM systems. Wraps `dask.distributed.LocalCluster` + `Client` with sensible defaults for single-node jobs, and extends to multi-node PBS/SLURM clusters via `dask-jobqueue` in v2.0.
 
-**Python 3.11+** | `pip install dask-setup`
+```bash
+pip install dask-setup              # single-node
+pip install dask-setup[multinode]   # + PBS/SLURM via dask-jobqueue
+```
 
 ---
 
