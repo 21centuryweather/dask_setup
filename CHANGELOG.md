@@ -155,6 +155,14 @@ in every case.
 - Release workflow now runs the test matrix, verifies the tag matches
   `pyproject.toml`, runs `twine check --strict`, and creates a GitHub Release
   before publishing to PyPI — all triggered by pushing a `v*` tag.
+- New `multinode` optional extra: `pip install dask_setup[multinode]` pulls in
+  `dask-jobqueue`, which previously had to be installed separately and was not
+  declared anywhere. It is now also a `dev` dependency, so CI actually exercises
+  the multi-node path instead of silently skipping it.
+- Tests no longer read `Worker.nthreads` / `Nanny.memory_limit`, which recent
+  `distributed` removed after deprecating them; they use `state.nthreads` and
+  `memory_manager.memory_limit` with a fallback to the old names. (Note that
+  `Worker.threads` is the thread registry dict, not a replacement count.)
 - `ruff` is pinned exactly (`== 0.16.4`) in the `dev` extra. It was `~= 0.4`,
   which permits everything below 1.0, so CI installed whatever had been released
   that morning; because ruff's formatter changes between minor versions, the

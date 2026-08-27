@@ -23,6 +23,13 @@ Homepage = "https://github.com/21centuryweather/dask_setup"
 dask-setup = "dask_setup.cli:main"
 
 [project.optional-dependencies]
+# Multi-node PBS/SLURM cluster support. Optional: the single-node path never
+# imports it, and setup_pbs_cluster()/setup_slurm_cluster() raise a helpful
+# ImportError if it is missing.
+multinode = [
+    "dask-jobqueue>=0.8",
+]
+
 dev = [
     # Pinned exactly, not a range. `ruff ~= 0.4` means >=0.4,<1.0, so CI picked
     # up whatever ruff had released that morning -- and ruff's formatter changes
@@ -34,6 +41,10 @@ dev = [
     # Xarray integration testing
     "xarray",
     "numpy",
+    # Multi-node tests exercise a real PBSJob. Without this, CI silently skipped
+    # the multi-node path -- including the regression test for the 4x worker
+    # under-provisioning fixed in 2.2.0.
+    "dask-jobqueue>=0.8",
 ]
 
 [tool.setuptools.package-data]

@@ -1,12 +1,38 @@
 """Tests for dask_setup.setup_dask_client function."""
 
 import os
-import warnings
 from pathlib import Path
 
 import pytest
 
 from dask_setup import setup_dask_client
+
+
+def worker_nthreads(worker) -> int:
+    """Thread count for a ``Worker`` or ``Nanny``, across ``distributed`` versions.
+
+    ``Worker.nthreads`` was deprecated in favour of ``Worker.state.nthreads``
+    and has since been removed; a ``Nanny`` has no ``.state`` and keeps
+    ``.nthreads``.  Note that ``Worker.threads`` is *not* the replacement --
+    it is the thread registry dict, so reading it as a count silently yields
+    the wrong answer rather than raising.
+    """
+    state = getattr(worker, "state", None)
+    if state is not None and hasattr(state, "nthreads"):
+        return state.nthreads
+    return worker.nthreads
+
+
+def worker_memory_limit(worker) -> int:
+    """Memory limit in bytes for a ``Worker`` or ``Nanny``, across versions.
+
+    ``.memory_limit`` moved onto ``.memory_manager`` and the old attribute has
+    since been removed.
+    """
+    manager = getattr(worker, "memory_manager", None)
+    if manager is not None and hasattr(manager, "memory_limit"):
+        return manager.memory_limit
+    return worker.memory_limit
 
 
 @pytest.mark.parametrize(
@@ -24,45 +50,38 @@ def test_workload_types(
     # Use 8 logical cores for predictable results
     mock_psutil["cpu_count"].return_value = 8
 
-    # Suppress deprecation warning from distributed library's internal nthreads access
-    # This warning comes from the distributed library itself when accessing worker.nthreads
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore", message=".*nthreads.*attribute has been moved.*", category=FutureWarning
-        )
+    client, cluster, temp_dir = setup_dask_client(
+        workload_type=workload_type, dashboard=False, max_workers=8, reserve_mem_gb=2.0
+    )
 
-        client, cluster, temp_dir = setup_dask_client(
-            workload_type=workload_type, dashboard=False, max_workers=8, reserve_mem_gb=2.0
-        )
+    try:
+        # Check cluster configuration
+        assert len(cluster.workers) >= 1
 
-        try:
-            # Check cluster configuration
-            assert len(cluster.workers) >= 1
+        # For "io" workload, we expect 1 worker with multiple threads
+        if workload_type == "io":
+            assert len(cluster.workers) == 1
+            # threads_per_worker should be between 4-16, clamped by logical_cores/2
+            # Check the cluster config instead of individual worker state
+            assert worker_nthreads(cluster.workers[0]) >= 4
+        elif workload_type == "cpu":
+            # CPU workload: processes=True, threads=1, workers≈cores
+            assert len(cluster.workers) <= 8
+            # Check the cluster config instead of individual worker state
+            assert worker_nthreads(cluster.workers[0]) == 1
+        elif workload_type == "mixed":
+            # Mixed: processes=True, threads=2, workers=cores/2
+            assert len(cluster.workers) <= 4  # 8 cores / 2 threads
+            # Check the cluster config instead of individual worker state
+            assert worker_nthreads(cluster.workers[0]) == 2
 
-            # For "io" workload, we expect 1 worker with multiple threads
-            if workload_type == "io":
-                assert len(cluster.workers) == 1
-                # threads_per_worker should be between 4-16, clamped by logical_cores/2
-                # Check the cluster config instead of individual worker state
-                assert cluster.workers[0].nthreads >= 4
-            elif workload_type == "cpu":
-                # CPU workload: processes=True, threads=1, workers≈cores
-                assert len(cluster.workers) <= 8
-                # Check the cluster config instead of individual worker state
-                assert cluster.workers[0].nthreads == 1
-            elif workload_type == "mixed":
-                # Mixed: processes=True, threads=2, workers=cores/2
-                assert len(cluster.workers) <= 4  # 8 cores / 2 threads
-                # Check the cluster config instead of individual worker state
-                assert cluster.workers[0].nthreads == 2
+        # Verify temp directory is created and valid
+        assert Path(temp_dir).exists()
+        assert Path(temp_dir).is_dir()
 
-            # Verify temp directory is created and valid
-            assert Path(temp_dir).exists()
-            assert Path(temp_dir).is_dir()
-
-        finally:
-            client.close()
-            cluster.close()
+    finally:
+        client.close()
+        cluster.close()
 
 
 def test_pbs_environment_detection(isolated_env, mock_psutil, temp_dir):
@@ -316,30 +335,26 @@ def test_memory_limits_per_worker(isolated_env, mock_psutil):
     # Set up 8 GB total memory
     mock_psutil["virtual_memory"].return_value.total = 8 * (1024**3)
 
-    # Suppress deprecation warning from distributed library about memory_limit access
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=".*memory_limit.*", category=FutureWarning)
+    client, cluster, temp_dir = setup_dask_client(
+        workload_type="cpu",
+        max_workers=2,
+        reserve_mem_gb=2.0,  # Reserve 2 GB
+        dashboard=False,
+    )
 
-        client, cluster, temp_dir = setup_dask_client(
-            workload_type="cpu",
-            max_workers=2,
-            reserve_mem_gb=2.0,  # Reserve 2 GB
-            dashboard=False,
-        )
+    try:
+        # Should have 2 workers
+        assert len(cluster.workers) == 2
 
-        try:
-            # Should have 2 workers
-            assert len(cluster.workers) == 2
+        # Each worker should get roughly (8 - 2) / 2 = 3 GB
+        for worker in cluster.workers.values():
+            # Memory limit should be around 3 GB (allow some variance)
+            memory_limit_gb = worker_memory_limit(worker) / (1024**3)
+            assert 2.5 <= memory_limit_gb <= 3.5
 
-            # Each worker should get roughly (8 - 2) / 2 = 3 GB
-            for worker in cluster.workers.values():
-                # Memory limit should be around 3 GB (allow some variance)
-                memory_limit_gb = worker.memory_limit / (1024**3)
-                assert 2.5 <= memory_limit_gb <= 3.5
-
-        finally:
-            client.close()
-            cluster.close()
+    finally:
+        client.close()
+        cluster.close()
 
 
 def test_adaptive_scaling(isolated_env, mock_psutil):

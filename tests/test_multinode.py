@@ -1466,10 +1466,33 @@ class TestJobqueuePrologueKwarg:
 
     @pytest.mark.unit
     def test_uses_the_current_name_when_available(self):
+        # Without dask-jobqueue installed there is no signature to introspect,
+        # and falling back to the legacy name is the correct answer.
+        pytest.importorskip("dask_jobqueue")
+
         from dask_setup.multinode import _jobqueue_prologue_kwarg
 
         assert _jobqueue_prologue_kwarg(["module load conda"]) == {
             "job_script_prologue": ["module load conda"]
+        }
+
+    @pytest.mark.unit
+    def test_falls_back_to_the_legacy_name_without_jobqueue(self, monkeypatch):
+        """The introspection failure path must still pass the lines through."""
+        import builtins
+
+        from dask_setup.multinode import _jobqueue_prologue_kwarg
+
+        real_import = builtins.__import__
+
+        def no_jobqueue(name, *args, **kwargs):
+            if name.startswith("dask_jobqueue"):
+                raise ImportError("no dask_jobqueue")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", no_jobqueue)
+        assert _jobqueue_prologue_kwarg(["module load conda"]) == {
+            "env_extra": ["module load conda"]
         }
 
     @pytest.mark.unit
@@ -1482,6 +1505,7 @@ class TestJobqueuePrologueKwarg:
     def test_a_real_pbsjob_accepts_it_without_warning(self):
         import warnings
 
+        pytest.importorskip("dask_jobqueue")
         from dask_jobqueue.pbs import PBSJob
 
         from dask_setup.multinode import _jobqueue_prologue_kwarg
