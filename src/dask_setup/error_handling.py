@@ -25,7 +25,9 @@ class ErrorContext:
     # System information
     platform_info: str = field(default_factory=lambda: platform.platform())
     python_version: str = field(
-        default_factory=lambda: f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        default_factory=lambda: (
+            f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        )
     )
     total_memory_gb: float = field(
         default_factory=lambda: psutil.virtual_memory().total / (1024**3)

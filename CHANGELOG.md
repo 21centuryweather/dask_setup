@@ -155,6 +155,10 @@ in every case.
 - Release workflow now runs the test matrix, verifies the tag matches
   `pyproject.toml`, runs `twine check --strict`, and creates a GitHub Release
   before publishing to PyPI — all triggered by pushing a `v*` tag.
+- `ruff` is pinned exactly (`== 0.16.4`) in the `dev` extra. It was `~= 0.4`,
+  which permits everything below 1.0, so CI installed whatever had been released
+  that morning; because ruff's formatter changes between minor versions, the
+  `ruff format --check` gate could fail on a commit that touched nothing.
 
 ## [2.0.0] - 2026-03-23
 
