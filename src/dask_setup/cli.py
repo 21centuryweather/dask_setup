@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from typing import Any
 
 import yaml
@@ -161,10 +162,14 @@ def cmd_create_profile(args: argparse.Namespace) -> int:
                 print(f" Base profile '{args.from_profile}' not found.", file=sys.stderr)
                 return 1
 
-            # Copy configuration and update name
-            new_config = base_profile.config
-            new_config.name = args.name
-            new_config.description = f"Based on {args.from_profile}"
+            # Copy the configuration -- assigning base_profile.config directly
+            # and then setting .name on it mutates the source profile, which
+            # for a builtin means renaming it for the rest of the process.
+            new_config = replace(
+                base_profile.config,
+                name=args.name,
+                description=f"Based on {args.from_profile}",
+            )
 
             from .config import ConfigProfile
 

@@ -12,6 +12,7 @@ good parallelization, typically targeting 256-512 MiB chunks per worker.
 from __future__ import annotations
 
 import math
+import re
 import warnings
 from typing import TYPE_CHECKING, Any
 
@@ -232,14 +233,12 @@ _TEMPORAL_PATTERNS: tuple[str, ...] = (
     "year",
     "hour",
 )
+#: Spatial names distinctive enough to match anywhere in a dimension name.
 _SPATIAL_PATTERNS: tuple[str, ...] = (
     "lat",
     "lon",
     "latitude",
     "longitude",
-    "x",
-    "y",
-    "z",
     "north",
     "south",
     "east",
@@ -247,19 +246,31 @@ _SPATIAL_PATTERNS: tuple[str, ...] = (
     "altitude",
     "depth",
     "level",
-    "lev",
     "height",
     "pressure",
-    "ni",
-    "nj",  # NEMO / irregular-grid names
+)
+
+#: Spatial names too short to match as substrings.  A bare ``"x"`` in
+#: :data:`_SPATIAL_PATTERNS` classified ``"proxy"``, ``"flux"`` and ``"max"``
+#: as spatial dimensions; ``"z"`` did the same to ``"zone"`` and ``"size"``,
+#: and ``"ni"`` to anything containing "ni" (``"omni"``, ``"unit"``... ).
+#: These match the whole name instead, optionally with a numeric suffix
+#: (``x``, ``x2``, ``x_1``, ``ni-3``) or a leading ``n``/``num`` count prefix.
+_SPATIAL_SHORT_PATTERNS: tuple[str, ...] = ("x", "y", "z", "ni", "nj", "lev")
+
+_SPATIAL_SHORT_RE = re.compile(
+    r"^(?:n|num|n_)?(?:" + "|".join(_SPATIAL_SHORT_PATTERNS) + r")(?:[_-]?\d+)?$"
 )
 
 
 def _classify_dimensions(dims: dict[str, int]) -> dict[str, list[str]]:
     """Classify dimension names as temporal, spatial, or other.
 
-    Matching is case-insensitive substring search, so ``"nTime"`` matches
-    ``"time"`` and ``"latitude_1"`` matches ``"lat"``.
+    Matching is case-insensitive substring search for the distinctive names, so
+    ``"nTime"`` matches ``"time"`` and ``"latitude_1"`` matches ``"lat"``.
+    Short names (``x``, ``y``, ``z``, ``ni``, ``nj``, ``lev``) must match the
+    whole dimension name, optionally with a count prefix or numeric suffix --
+    ``"x"``, ``"nx"``, ``"x_2"`` are spatial, ``"proxy"`` and ``"flux"`` are not.
 
     Args:
         dims: Mapping of dimension name → size (as returned by ``ds.sizes``).
@@ -277,7 +288,7 @@ def _classify_dimensions(dims: dict[str, int]) -> dict[str, list[str]]:
         d_lower = dim.lower()
         if any(t in d_lower for t in _TEMPORAL_PATTERNS):
             result["temporal"].append(dim)
-        elif any(s in d_lower for s in _SPATIAL_PATTERNS):
+        elif any(s in d_lower for s in _SPATIAL_PATTERNS) or _SPATIAL_SHORT_RE.match(d_lower):
             result["spatial"].append(dim)
         else:
             result["other"].append(dim)
@@ -460,18 +471,23 @@ def _calculate_optimal_chunks(
         current_bytes = _estimate_chunk_bytes(working_chunks)
 
         while current_bytes > effective_target_max:
-            # Prefer to chunk spatial free dims first
-            candidate_dims = (
-                spatial_free
-                if spatial_free
-                else [d for d in free_dims if working_chunks[d] > 1 and d not in time_free]
-            )
+            # Prefer to chunk spatial free dims first, then non-temporal free
+            # dims, then anything left.  Every tier must be filtered to dims
+            # that can still be halved — a dim already at 1 yields
+            # max(1, 1 // 2) == 1, which would leave current_bytes unchanged
+            # and spin this loop forever.
+            reducible_spatial = [d for d in spatial_free if working_chunks[d] > 1]
+            candidate_dims = reducible_spatial or [
+                d for d in free_dims if working_chunks[d] > 1 and d not in time_free
+            ]
 
             if not candidate_dims:
-                # Fall back to any reducible free dim
+                # Fall back to any reducible free dim (including temporal ones)
                 candidate_dims = [d for d in free_dims if working_chunks[d] > 1]
 
             if not candidate_dims:
+                # Nothing left to halve — the chunk is as small as this
+                # variable's dimensions allow.  A warning is emitted below.
                 break
 
             largest_dim = max(candidate_dims, key=lambda d: working_chunks[d])

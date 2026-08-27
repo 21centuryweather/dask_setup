@@ -3,8 +3,31 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
+
+#: Matches the leaf name this module creates, e.g. ``dask-12345``.
+_DASK_TEMP_LEAF = re.compile(r"^dask-\d+$")
+
+
+def _strip_dask_leaves(path: Path) -> Path:
+    """Return *path* with any trailing ``dask-<pid>`` components removed.
+
+    ``create_dask_temp_dir`` points ``TMPDIR`` at the directory it creates.
+    Without this, a second call would read that ``TMPDIR`` back as its base and
+    nest -- ``.../dask-123/dask-456`` -- and a third would nest again.  Job
+    scripts that export ``TMPDIR`` from a previous step hit the same thing.
+    """
+    while _DASK_TEMP_LEAF.match(path.name) and path.parent != path:
+        path = path.parent
+    return path
+
+
+def _resolve_base_dir() -> str:
+    """Pick the base directory for a new Dask temp dir (auto-detection path)."""
+    candidate = os.environ.get("PBS_JOBFS") or os.environ.get("TMPDIR") or "/tmp"
+    return str(_strip_dask_leaves(Path(candidate)))
 
 
 def create_dask_temp_dir(base_dir: str | None = None) -> Path:
@@ -26,9 +49,15 @@ def create_dask_temp_dir(base_dir: str | None = None) -> Path:
         - Creates the temporary directory with process-specific name
         - Sets TMPDIR environment variable to point to the directory
         - Sets DASK_TEMPORARY_DIRECTORY environment variable
+
+    Calling this repeatedly in one process is safe: any ``dask-<pid>`` leaf is
+    stripped off the detected base before use, so the result is the same path
+    each time rather than a nested ``dask-<pid>/dask-<pid>`` chain.
     """
-    if base_dir is None:
-        base_dir = os.environ.get("PBS_JOBFS") or os.environ.get("TMPDIR") or "/tmp"
+    # An explicit base is honoured as given, but -- like the auto-detected one
+    # -- is still guarded against a caller passing back a directory this
+    # function previously returned.
+    base_dir = _resolve_base_dir() if base_dir is None else str(_strip_dask_leaves(Path(base_dir)))
 
     # Create unique directory name with process ID
     dask_temp_dir = Path(base_dir) / f"dask-{os.getpid()}"

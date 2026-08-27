@@ -3,6 +3,7 @@
 import os
 from unittest.mock import patch
 
+import psutil
 import pytest
 
 from dask_setup.exceptions import ResourceDetectionError
@@ -257,15 +258,18 @@ class TestDetectSlurmResources:
         assert result is None
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("edge_case_cpus,expected_cores", [("0", 0), ("-1", -1)])
-    def test_slurm_edge_case_cpus(self, edge_case_cpus, expected_cores):
-        """Test SLURM detection with edge case CPU values that parse as integers."""
+    @pytest.mark.parametrize("edge_case_cpus", ["0", "-1"])
+    def test_slurm_non_positive_cpus_rejected(self, edge_case_cpus):
+        """Non-positive core counts are rejected so detection falls through.
+
+        These parse as integers but describe no usable node: decide_topology
+        raises on total_cores <= 0.  Returning None lets detect_resources fall
+        through to psutil and produce a working cluster instead.
+        """
         os.environ["SLURM_CPUS_ON_NODE"] = edge_case_cpus
         os.environ["SLURM_MEM_PER_NODE"] = "8192"
 
-        result = _detect_slurm_resources()
-        assert result is not None
-        assert result.total_cores == expected_cores
+        assert _detect_slurm_resources() is None
 
     @pytest.mark.unit
     def test_slurm_with_non_digit_memory(self):
@@ -375,14 +379,12 @@ class TestDetectPbsResources:
         assert result is None
 
     @pytest.mark.unit
-    def test_pbs_zero_cpus_edge_case(self):
-        """Test PBS detection with zero CPUs (valid digit but edge case)."""
+    def test_pbs_zero_cpus_rejected(self):
+        """NCPUS=0 describes no usable node, so detection declines it."""
         os.environ["NCPUS"] = "0"
         os.environ["PBS_VMEM"] = "16gb"
 
-        result = _detect_pbs_resources()
-        assert result is not None
-        assert result.total_cores == 0
+        assert _detect_pbs_resources() is None
 
     @pytest.mark.unit
     def test_pbs_with_various_memory_formats(self):
@@ -979,3 +981,91 @@ class TestParsePBSMemBytes:
         assert result.total_mem_bytes == gadi_496_gib
         result_gib = result.total_mem_bytes / 1024**3
         assert 490 < result_gib < 500, f"Expected ~496 GiB, got {result_gib:.1f} GiB"
+
+
+class TestZeroMeansNoLimitNotNoMemory:
+    """SLURM exports SLURM_MEM_PER_NODE=0 when a job requests no memory limit.
+
+    _parse_mem_bytes("0") returns 0, and the psutil fallback was guarded on
+    ``is None`` -- so a 0 sailed through as a literal zero-byte budget and
+    suppressed the fallback that should have rescued it.
+    """
+
+    def setup_method(self):
+        for var in (
+            "SLURM_CPUS_ON_NODE",
+            "SLURM_MEM_PER_NODE",
+            "SLURM_MEM_PER_CPU",
+            "NCPUS",
+            "PBS_NCPUS",
+            "PBS_VMEM",
+            "PBS_MEM",
+        ):
+            os.environ.pop(var, None)
+
+    teardown_method = setup_method
+
+    @pytest.mark.unit
+    def test_slurm_zero_total_memory_falls_back_to_psutil(self):
+        os.environ["SLURM_CPUS_ON_NODE"] = "8"
+        os.environ["SLURM_MEM_PER_NODE"] = "0"
+
+        result = _detect_slurm_resources()
+
+        assert result is not None
+        assert result.total_mem_bytes == psutil.virtual_memory().total
+
+    @pytest.mark.unit
+    def test_slurm_zero_total_falls_through_to_per_cpu(self):
+        os.environ["SLURM_CPUS_ON_NODE"] = "8"
+        os.environ["SLURM_MEM_PER_NODE"] = "0"
+        os.environ["SLURM_MEM_PER_CPU"] = "2048"  # MB
+
+        result = _detect_slurm_resources()
+
+        assert result.total_mem_bytes == 2048 * 8 * 1024 * 1024
+
+    @pytest.mark.unit
+    def test_slurm_both_zero_falls_back_to_psutil(self):
+        os.environ["SLURM_CPUS_ON_NODE"] = "8"
+        os.environ["SLURM_MEM_PER_NODE"] = "0"
+        os.environ["SLURM_MEM_PER_CPU"] = "0"
+
+        result = _detect_slurm_resources()
+
+        assert result.total_mem_bytes == psutil.virtual_memory().total
+
+    @pytest.mark.unit
+    def test_pbs_zero_memory_falls_back_to_psutil(self):
+        os.environ["NCPUS"] = "12"
+        os.environ["PBS_VMEM"] = "0"
+
+        result = _detect_pbs_resources()
+
+        assert result.total_mem_bytes == psutil.virtual_memory().total
+
+    @pytest.mark.unit
+    def test_a_real_slurm_limit_is_still_honoured(self):
+        """The fix must not turn every reading into the psutil fallback."""
+        os.environ["SLURM_CPUS_ON_NODE"] = "8"
+        os.environ["SLURM_MEM_PER_NODE"] = "12288"  # MB
+
+        result = _detect_slurm_resources()
+
+        assert result.total_mem_bytes == 12288 * 1024 * 1024
+
+    @pytest.mark.unit
+    def test_never_reports_a_zero_byte_budget(self):
+        for env in (
+            {"SLURM_CPUS_ON_NODE": "4", "SLURM_MEM_PER_NODE": "0"},
+            {"SLURM_CPUS_ON_NODE": "4", "SLURM_MEM_PER_CPU": "0"},
+            {"NCPUS": "4", "PBS_VMEM": "0"},
+            {"NCPUS": "4", "PBS_MEM": "0"},
+        ):
+            self.setup_method()
+            os.environ.update(env)
+            detector = (
+                _detect_slurm_resources if "SLURM_CPUS_ON_NODE" in env else _detect_pbs_resources
+            )
+            result = detector()
+            assert result is not None and result.total_mem_bytes > 0, env

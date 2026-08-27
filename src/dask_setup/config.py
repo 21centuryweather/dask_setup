@@ -280,8 +280,43 @@ class DaskSetupConfig:
 
         return instance
 
+    def merge_overrides(self, overrides: dict[str, Any] | None) -> DaskSetupConfig:
+        """Apply a dict of explicitly-named field overrides on top of this configuration.
+
+        Unlike :meth:`merge_with`, only the keys actually present in *overrides*
+        are applied.  This is the right tool for merging caller-supplied keyword
+        arguments: building a throwaway :class:`DaskSetupConfig` from them would
+        also carry ~20 untouched dataclass defaults, which would silently
+        overwrite the profile or config object being merged into.
+
+        Args:
+            overrides: Mapping of field name -> value.  Only these fields are
+                changed.  ``None`` or an empty dict is a no-op.  Unknown keys
+                are ignored (matching :meth:`from_dict`).  A ``tags`` entry
+                replaces the tag list rather than merging it.
+
+        Returns:
+            New merged configuration, validated as a whole.
+        """
+        if not overrides:
+            return self
+
+        merged_dict = self.to_dict()
+        valid_fields = {f.name for f in self.__dataclass_fields__.values()}
+        merged_dict.update({k: v for k, v in overrides.items() if k in valid_fields})
+
+        merged = DaskSetupConfig.from_dict(merged_dict, skip_validation=True)
+        merged.validate()
+        return merged
+
     def merge_with(self, other: DaskSetupConfig | None) -> DaskSetupConfig:
         """Merge this configuration with another, with other taking precedence.
+
+        Every non-``None`` field of *other* is applied — including fields left
+        at their dataclass defaults.  That makes this the right tool for
+        layering two fully-specified configurations (defaults < profile), and
+        the wrong one for applying a handful of caller keyword arguments; use
+        :meth:`merge_overrides` for that.
 
         Args:
             other: Configuration to merge (higher precedence)

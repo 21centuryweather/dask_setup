@@ -34,6 +34,61 @@ _MIN_SPILL: float = 0.50
 _MAX_SPILL: float = 0.95
 
 
+def _apply_thresholds(
+    dask_worker: object = None,
+    new_target: float = 0.75,
+    new_spill: float = 0.85,
+) -> bool:
+    """Set new memory thresholds on a live worker. Runs via ``Client.run``.
+
+    Updating ``dask.config`` alone is not enough:
+    ``WorkerMemoryManager.__init__`` reads ``distributed.worker.memory.target``
+    and ``...spill`` exactly once at construction and stores them as instance
+    attributes, and it sizes the ``SpillBuffer``'s eviction threshold from
+    ``memory_limit * memory_target_fraction`` at the same moment.  A running
+    worker never re-reads the config, so the config write has to be paired with
+    a direct update of the live objects.
+
+    Distributed injects the local ``Worker`` as *dask_worker*.
+
+    Returns
+    -------
+    bool
+        ``True`` if the live memory manager was updated, ``False`` if this
+        worker exposes no manager to update (in which case the caller must not
+        report the change as applied).
+    """
+    import dask
+
+    # Keep the config in sync too, so anything that reads it later — including
+    # a worker restarted from this config — agrees with the live values.
+    dask.config.set(
+        {
+            "distributed.worker.memory.target": new_target,
+            "distributed.worker.memory.spill": new_spill,
+        }
+    )
+
+    manager = getattr(dask_worker, "memory_manager", None)
+    if manager is None:
+        return False
+
+    manager.memory_target_fraction = new_target
+    manager.memory_spill_fraction = new_spill
+
+    # Resize the SpillBuffer's eviction threshold (zict.Buffer exposes it as
+    # `.n`) and let it act on the new value straight away.
+    data = getattr(manager, "data", None)
+    memory_limit = getattr(manager, "memory_limit", None)
+    if data is not None and memory_limit and hasattr(data, "n"):
+        data.n = int(memory_limit * new_target)
+        evict = getattr(data, "evict_until_below_target", None)
+        if callable(evict):
+            evict()
+
+    return True
+
+
 @dataclass
 class MemoryTuneResult:
     """Result from a memory threshold tuning pass.
@@ -188,15 +243,12 @@ def tune_memory_thresholds(
     spill_gib: float = 0.0
 
     try:
+        from .reporting import worker_spill_bytes
+
         info = client.scheduler_info()
-        total_spill_bytes = 0
-        for worker_info in info.get("workers", {}).values():
-            metrics = worker_info.get("metrics", {})
-            spill_val = metrics.get("spilled_memory") or metrics.get("spill")
-            if isinstance(spill_val, dict):
-                total_spill_bytes += spill_val.get("disk", 0) or 0
-            elif isinstance(spill_val, int | float):
-                total_spill_bytes += int(spill_val)
+        total_spill_bytes = sum(
+            worker_spill_bytes(w.get("metrics", {})) for w in info.get("workers", {}).values()
+        )
         spill_gib = total_spill_bytes / (1024**3)
     except Exception as e:
         logger.debug("Could not read spill stats from scheduler", error=str(e))
@@ -239,32 +291,35 @@ def tune_memory_thresholds(
     workers_updated = 0
 
     if abs(new_target - old_target) > 1e-6 or abs(new_spill - old_spill) > 1e-6:
-        # Capture in locals so the lambda closure captures the right values
+        # Capture in locals so the default arguments bind the right values
         _new_target = new_target
         _new_spill = new_spill
 
         try:
+            results = client.run(_apply_thresholds, new_target=_new_target, new_spill=_new_spill)
+            workers_updated = sum(1 for ok in results.values() if ok is True)
+            n_workers = len(results)
 
-            def _apply(new_target=_new_target, new_spill=_new_spill):
-                import dask
-
-                dask.config.set(
-                    {
-                        "distributed.worker.memory.target": new_target,
-                        "distributed.worker.memory.spill": new_spill,
-                    }
+            if workers_updated:
+                logger.info(
+                    "Worker memory thresholds updated",
+                    old_target=f"{old_target:.0%}",
+                    new_target=f"{new_target:.0%}",
+                    old_spill=f"{old_spill:.0%}",
+                    new_spill=f"{new_spill:.0%}",
+                    workers=f"{workers_updated}/{n_workers}",
                 )
-
-            client.run(_apply)
-            workers_updated = len(client.scheduler_info().get("workers", {}))
-            logger.info(
-                "Worker memory thresholds updated",
-                old_target=f"{old_target:.0%}",
-                new_target=f"{new_target:.0%}",
-                old_spill=f"{old_spill:.0%}",
-                new_spill=f"{new_spill:.0%}",
-                workers=workers_updated,
-            )
+            if workers_updated < n_workers:
+                # Never report a change that did not land.
+                logger.warning(
+                    "Some workers did not accept the new memory thresholds",
+                    updated=workers_updated,
+                    total=n_workers,
+                )
+                rationale += (
+                    f" [applied to {workers_updated}/{n_workers} workers; "
+                    "the rest kept their previous thresholds]"
+                )
         except Exception as e:
             logger.warning("Failed to apply memory thresholds to workers", error=str(e))
             rationale += f" [apply failed: {e}]"

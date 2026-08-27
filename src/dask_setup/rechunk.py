@@ -31,13 +31,51 @@ logger = get_logger("rechunk")
 __all__ = ["rechunk_dataset"]
 
 
+def _warn_if_not_pure_split(ds: Any, target_chunks: dict) -> None:
+    """Log a warning when *target_chunks* enlarges chunks along any dimension.
+
+    Enlarging a chunk means the native rechunk path has to hold several source
+    chunks in memory to build one target chunk, which is exactly the case
+    ``rechunker`` exists to handle.  Shrinking chunks is safe.
+    """
+    existing = getattr(ds, "chunksizes", None) or {}
+    growing = {}
+    for dim, target in target_chunks.items():
+        sizes = existing.get(dim)
+        if not sizes or not isinstance(target, int):
+            continue
+        source = max(sizes)
+        if target > source:
+            growing[dim] = (source, target)
+
+    if growing:
+        logger.warning(
+            "Native rechunk enlarges chunks; peak memory is not bounded on this path",
+            dims=",".join(f"{d}:{src}->{tgt}" for d, (src, tgt) in sorted(growing.items())),
+            hint="install a rechunker/xarray combination that works together for a "
+            "memory-bounded rechunk, or lower the target chunk sizes",
+        )
+
+
 def _rechunk_native(ds: Any, target_chunks: dict, output_path: Path, xr: Any) -> None:
     """Rechunk *ds* to *target_chunks* and write to *output_path* via xarray.to_zarr().
 
     This is the fallback path used when ``rechunker`` is incompatible with the
-    installed xarray version.  For a Dask-backed dataset the scheduler computes
-    and writes one chunk at a time, so peak memory stays within the per-worker
-    budget even for very large datasets.
+    installed xarray version.
+
+    .. warning::
+
+       Unlike ``rechunker``, this path gives **no memory bound**.  ``rechunker``
+       stages through an intermediate store precisely so that peak memory stays
+       under an explicit ``max_mem``; ``ds.chunk(...).to_zarr(...)`` has no such
+       mechanism.  Whenever a target chunk is larger than the source chunk along
+       some dimension, producing it requires every source chunk it overlaps to
+       be resident at once, and the graph can hold many such groups in flight.
+       Peak memory is bounded by the per-worker limit only when every target
+       chunk is a subdivision of a single source chunk -- i.e. a pure split.
+
+    A warning is logged when the requested rechunk is not a pure split, so the
+    risk is visible before the job dies rather than after.
 
     Parameters
     ----------
@@ -46,6 +84,7 @@ def _rechunk_native(ds: Any, target_chunks: dict, output_path: Path, xr: Any) ->
     output_path : Path  — destination Zarr store (must not already exist)
     xr : the xarray module (already imported by caller)
     """
+    _warn_if_not_pure_split(ds, target_chunks)
     rechunked = ds.chunk(target_chunks)
     rechunked.to_zarr(str(output_path), mode="w")
     # Consolidate metadata so xr.open_zarr(consolidated=True) works

@@ -199,36 +199,61 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
 
         return profiles
 
-    def get_profile(self, name: str) -> ConfigProfile | None:
+    def _load_named(
+        self,
+        file_path: Path,
+        name: str,
+        kind: str,
+        _inheritance_chain: tuple[str, ...] | None,
+    ) -> ConfigProfile:
+        """Load one profile file, naming the profile in any error it raises.
+
+        The name is added only at the outermost call (empty inheritance chain).
+        Wrapping at every level of a ``based_on`` chain is what turned a cycle
+        into a multi-kilobyte nested error message.
+        """
+        outermost = not _inheritance_chain
+        try:
+            return self.load_profile_from_file(file_path, _inheritance_chain)
+        except Exception as e:
+            if not outermost:
+                raise
+            raise InvalidConfigurationError(f"Failed to load {kind} '{name}': {e}") from e
+
+    def get_profile(
+        self,
+        name: str,
+        _inheritance_chain: tuple[str, ...] | None = None,
+    ) -> ConfigProfile | None:
         """Get a specific profile by name.
 
-        Search order: builtin profiles → site-wide profiles → user profiles.
+        Precedence: user profiles → site-wide profiles → builtins, so a
+        profile you save shadows a builtin of the same name.  This matches
+        :meth:`list_profiles`, and therefore what ``dask-setup list`` and
+        ``dask-setup show`` display.
 
         Args:
             name: Profile name
+            _inheritance_chain: Internal. Names already being resolved further
+                up a ``based_on`` chain, used for cycle detection. Callers
+                should not set this.
 
         Returns:
             ConfigProfile if found, None otherwise
         """
-        # Built-in profiles take highest precedence
-        if name in self.builtin_profiles:
-            return self.builtin_profiles[name]
-
-        # Site-wide profiles
-        site_file = self.site_profiles_dir / f"{name}.yaml"
-        if site_file.exists():
-            try:
-                return self.load_profile_from_file(site_file)
-            except Exception as e:
-                raise InvalidConfigurationError(f"Failed to load site profile '{name}': {e}") from e
-
-        # User profiles take lowest precedence
+        # User profiles take precedence
         profile_file = self.profiles_dir / f"{name}.yaml"
         if profile_file.exists():
-            try:
-                return self.load_profile_from_file(profile_file)
-            except Exception as e:
-                raise InvalidConfigurationError(f"Failed to load profile '{name}': {e}") from e
+            return self._load_named(profile_file, name, "profile", _inheritance_chain)
+
+        # Then site-wide profiles
+        site_file = self.site_profiles_dir / f"{name}.yaml"
+        if site_file.exists():
+            return self._load_named(site_file, name, "site profile", _inheritance_chain)
+
+        # Builtins are the fallback
+        if name in self.builtin_profiles:
+            return self.builtin_profiles[name]
 
         return None
 
@@ -302,7 +327,7 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
     def load_profile_from_file(
         self,
         file_path: Path,
-        _inheritance_chain: frozenset[str] | None = None,
+        _inheritance_chain: tuple[str, ...] | None = None,
     ) -> ConfigProfile:
         """Load a profile from a YAML file, resolving any ``based_on`` inheritance.
 
@@ -326,7 +351,7 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
             non-existent parent, or has a circular ``based_on`` chain.
         """
         if _inheritance_chain is None:
-            _inheritance_chain = frozenset()
+            _inheritance_chain = ()
 
         try:
             with open(file_path) as f:
@@ -363,20 +388,23 @@ Use `dask-setup profile create <name>` or manually create YAML files in the prof
         if based_on is not None:
             profile_name = data.get("name", file_path.stem)
 
-            # Cycle detection
-            if based_on in _inheritance_chain:
-                raise InvalidConfigurationError(
-                    f"Circular profile inheritance detected: "
-                    f"{' -> '.join(sorted(_inheritance_chain))} -> {based_on}"
-                )
-            if len(_inheritance_chain) >= _MAX_INHERITANCE_DEPTH:
+            # Cycle detection. The chain holds every profile currently being
+            # resolved further up this based_on chain, including this one.
+            chain = (*_inheritance_chain, profile_name)
+
+            if based_on in chain:
+                cycle = " -> ".join([*chain, based_on])
+                raise InvalidConfigurationError(f"Circular profile inheritance detected: {cycle}")
+            if len(chain) >= _MAX_INHERITANCE_DEPTH:
                 raise InvalidConfigurationError(
                     f"Profile inheritance chain is too deep (max {_MAX_INHERITANCE_DEPTH}). "
                     "Check for accidental cycles."
                 )
 
-            # Resolve the parent — use get_profile() so builtins/site/user all work
-            base_profile = self.get_profile(based_on)
+            # Resolve the parent — use get_profile() so builtins/site/user all
+            # work. The chain must be threaded through, or every recursion
+            # restarts it empty and the checks above never fire.
+            base_profile = self.get_profile(based_on, _inheritance_chain=chain)
             if base_profile is None:
                 raise InvalidConfigurationError(
                     f"Profile '{profile_name}' declares based_on='{based_on}' "

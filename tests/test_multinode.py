@@ -1029,7 +1029,9 @@ class TestSetupInteractiveClusterSingleNode:
         ) as mock_sdc:
             client, cluster, tmp = setup_interactive_cluster(workload_type="cpu")
 
-        mock_sdc.assert_called_once_with(workload_type="cpu", mode="local")
+        mock_sdc.assert_called_once_with(
+            workload_type="cpu", max_workers=None, config=None, mode="local"
+        )
         assert client is mock_client
         assert cluster is mock_cluster
 
@@ -1050,7 +1052,9 @@ class TestSetupInteractiveClusterSingleNode:
         ) as mock_sdc:
             client, cluster, tmp = setup_interactive_cluster()
 
-        mock_sdc.assert_called_once_with(workload_type="cpu", mode="local")
+        mock_sdc.assert_called_once_with(
+            workload_type="cpu", max_workers=None, config=None, mode="local"
+        )
         assert client is mock_client
 
     def test_workload_type_forwarded(self, monkeypatch):
@@ -1067,7 +1071,9 @@ class TestSetupInteractiveClusterSingleNode:
         ) as mock_sdc:
             setup_interactive_cluster(workload_type="io")
 
-        mock_sdc.assert_called_once_with(workload_type="io", mode="local")
+        mock_sdc.assert_called_once_with(
+            workload_type="io", max_workers=None, config=None, mode="local"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1198,3 +1204,297 @@ class TestSetupDaskClientInteractiveDispatch:
 
         mock_interactive.assert_called_once()
         assert result[0] is mock_client
+
+
+class TestJobqueueResourceSemantics:
+    """dask-jobqueue's `cores` and `memory` are per-JOB, not per-worker.
+
+    Regression guard: per-worker values were passed straight through, so
+    dask-jobqueue divided them again by `processes`. With the documented
+    example (4 workers x 12 cores x 32 GB) the job reserved ncpus=48/mem=128GB
+    while each worker was configured for 3 threads and 8 GB.
+    """
+
+    @staticmethod
+    def _cfg():
+        from dask_setup.multinode import MultiNodeConfig
+
+        return MultiNodeConfig(
+            workers_per_node=4,
+            cores_per_worker=12,
+            mem_per_worker_gb=32.0,
+            walltime="04:00:00",
+            queue="normal",
+            project="ab01",
+        )
+
+    @pytest.mark.unit
+    def test_pbs_receives_per_job_totals(self):
+        from dask_setup.multinode import setup_pbs_cluster
+
+        cfg = self._cfg()
+        with (
+            patch("dask_setup.multinode._check_jobqueue"),
+            patch("dask_setup.multinode.PBSCluster") as mock_cluster,
+            patch("dask_setup.multinode.Client"),
+            patch("dask_setup.multinode._wait_for_workers"),
+        ):
+            setup_pbs_cluster(cfg)
+
+        kwargs = mock_cluster.call_args.kwargs
+        assert kwargs["cores"] == 48  # 4 x 12, not 12
+        assert kwargs["memory"] == "128GB"  # 4 x 32, not 32
+        assert kwargs["processes"] == 4
+        # ...and they agree with what the scheduler is asked to reserve
+        assert "ncpus=48" in kwargs["resource_spec"]
+        assert "mem=128GB" in kwargs["resource_spec"]
+
+    @pytest.mark.unit
+    def test_slurm_receives_per_job_totals(self):
+        from dask_setup.multinode import setup_slurm_cluster
+
+        cfg = self._cfg()
+        with (
+            patch("dask_setup.multinode._check_jobqueue"),
+            patch("dask_setup.multinode.SLURMCluster") as mock_cluster,
+            patch("dask_setup.multinode.Client"),
+            patch("dask_setup.multinode._wait_for_workers"),
+        ):
+            setup_slurm_cluster(cfg)
+
+        kwargs = mock_cluster.call_args.kwargs
+        assert kwargs["cores"] == 48
+        assert kwargs["memory"] == "128GB"
+        assert kwargs["processes"] == 4
+
+    @pytest.mark.unit
+    def test_derived_per_worker_values_match_the_config(self):
+        """What dask-jobqueue derives must equal what the user asked for."""
+        cfg = self._cfg()
+        threads_per_worker = cfg.total_cores_per_job // cfg.workers_per_node
+        gb_per_worker = cfg.total_mem_gb_per_job / cfg.workers_per_node
+
+        assert threads_per_worker == cfg.cores_per_worker
+        assert gb_per_worker == cfg.mem_per_worker_gb
+
+    @pytest.mark.unit
+    def test_single_worker_per_node_is_unaffected(self):
+        from dask_setup.multinode import MultiNodeConfig, setup_pbs_cluster
+
+        cfg = MultiNodeConfig(workers_per_node=1, cores_per_worker=8, mem_per_worker_gb=16.0)
+        with (
+            patch("dask_setup.multinode._check_jobqueue"),
+            patch("dask_setup.multinode.PBSCluster") as mock_cluster,
+            patch("dask_setup.multinode.Client"),
+            patch("dask_setup.multinode._wait_for_workers"),
+        ):
+            setup_pbs_cluster(cfg)
+
+        kwargs = mock_cluster.call_args.kwargs
+        assert kwargs["cores"] == 8
+        assert kwargs["memory"] == "16GB"
+
+
+class TestApplyOverridesPreservesEveryField:
+    """_apply_overrides must not lose fields that to_dict() omits.
+
+    Regression guard: it round-tripped through MultiNodeConfig.to_dict(), a
+    JSON-facing view with no env_extra or scheduler_options, then reset both to
+    empty — silently dropping `module load` lines from worker job scripts.
+    """
+
+    @staticmethod
+    def _rich_cfg(shared_tmp_dir="/scratch/ab01/tmp"):
+        from dask_setup.multinode import MultiNodeConfig
+
+        return MultiNodeConfig(
+            workers_per_node=4,
+            cores_per_worker=12,
+            mem_per_worker_gb=32.0,
+            env_extra=["module load conda/analysis3", "export OMP_NUM_THREADS=1"],
+            scheduler_options={"dashboard_address": ":8899"},
+            job_extra_directives=["-l storage=gdata/xy00"],
+            shared_tmp_dir=shared_tmp_dir,
+            project="ab01",
+        )
+
+    @pytest.mark.unit
+    def test_env_extra_and_scheduler_options_survive(self):
+        from dask_setup.multinode import _apply_overrides
+
+        cfg = self._rich_cfg()
+        out = _apply_overrides(cfg, walltime="08:00:00")
+
+        assert out.env_extra == cfg.env_extra
+        assert out.scheduler_options == cfg.scheduler_options
+        assert out.job_extra_directives == cfg.job_extra_directives
+        assert out.shared_tmp_dir == cfg.shared_tmp_dir
+        assert out.walltime == "08:00:00"
+
+    @pytest.mark.unit
+    def test_none_overrides_leave_fields_untouched(self):
+        from dask_setup.multinode import _apply_overrides
+
+        cfg = self._rich_cfg()
+        out = _apply_overrides(cfg, walltime=None, queue=None, project=None)
+
+        assert out.walltime == cfg.walltime
+        assert out.queue == cfg.queue
+        assert out.project == cfg.project
+
+    @pytest.mark.unit
+    def test_env_extra_reaches_the_cluster(self, tmp_path):
+        from dask_setup.multinode import setup_pbs_cluster
+
+        # setup_pbs_cluster really creates the shared temp dir, so keep it local
+        cfg = self._rich_cfg(shared_tmp_dir=str(tmp_path / "shared"))
+        with (
+            patch("dask_setup.multinode._check_jobqueue"),
+            patch("dask_setup.multinode.PBSCluster") as mock_cluster,
+            patch("dask_setup.multinode.Client"),
+            patch("dask_setup.multinode._wait_for_workers"),
+        ):
+            setup_pbs_cluster(cfg, walltime="02:00:00")
+
+        kwargs = mock_cluster.call_args.kwargs
+        # dask-jobqueue renamed env_extra -> job_script_prologue in 0.8 and
+        # warns when the old name is used; either name is acceptable as long
+        # as the lines actually get through.
+        prologue = kwargs.get("job_script_prologue", kwargs.get("env_extra"))
+        assert prologue == cfg.env_extra
+        assert kwargs["scheduler_options"] == cfg.scheduler_options
+
+    @pytest.mark.unit
+    def test_every_init_field_round_trips(self):
+        """Guards against a new field being added and silently dropped."""
+        from dataclasses import fields
+
+        from dask_setup.multinode import MultiNodeConfig, _apply_overrides
+
+        cfg = self._rich_cfg()
+        out = _apply_overrides(cfg, walltime="09:00:00")
+
+        for f in fields(MultiNodeConfig):
+            if not f.init or f.name == "walltime":
+                continue
+            assert getattr(out, f.name) == getattr(cfg, f.name), f"{f.name} was lost"
+
+
+class TestGeneratedJobScriptsAreValidShell:
+    """The script generators and dask-jobqueue disagreed about env_extra.
+
+    Both consume the same list, but the generators prefixed every entry with
+    "export" while dask-jobqueue emits it verbatim -- so
+    env_extra=["module load conda"] ran on one path and produced
+    "export module load conda" on the other.  Paths were also interpolated
+    unquoted.
+    """
+
+    @staticmethod
+    def _cfg(**kwargs):
+        from dask_setup.multinode import MultiNodeConfig
+
+        base = {
+            "project": "ab01",
+            "queue": "normal",
+            "env_extra": ["module load conda/analysis3", "export OMP_NUM_THREADS=1"],
+        }
+        base.update(kwargs)
+        return MultiNodeConfig(**base)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("generator", ["generate_pbs_script", "generate_slurm_script"])
+    def test_module_load_is_not_prefixed_with_export(self, generator):
+        import dask_setup.multinode as mn
+
+        script = getattr(mn, generator)(self._cfg(), "/home/me/run.py")
+
+        assert "module load conda/analysis3" in script
+        assert "export module load" not in script
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("generator", ["generate_pbs_script", "generate_slurm_script"])
+    def test_explicit_exports_are_passed_through_once(self, generator):
+        import dask_setup.multinode as mn
+
+        script = getattr(mn, generator)(self._cfg(), "/home/me/run.py")
+
+        assert script.count("export OMP_NUM_THREADS=1") == 1
+        assert "export export" not in script
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("generator", ["generate_pbs_script", "generate_slurm_script"])
+    def test_paths_with_spaces_are_quoted(self, generator):
+        import shlex
+
+        import dask_setup.multinode as mn
+
+        script = getattr(mn, generator)(
+            self._cfg(shared_tmp_dir="/scratch/my project/tmp"),
+            "/home/me/my script.py",
+            python_executable="/opt/py 3.12/bin/python",
+        )
+
+        for line in script.splitlines():
+            # Every non-directive line must survive shell tokenisation intact.
+            if line.startswith(("#", "")) and not line.strip():
+                continue
+            shlex.split(line)  # raises ValueError on unbalanced quoting
+
+        assert "'/scratch/my project/tmp'" in script
+        assert "'/home/me/my script.py'" in script
+
+    @pytest.mark.unit
+    def test_shared_tmp_path_with_a_space_is_a_single_token(self):
+        import shlex
+
+        from dask_setup.multinode import generate_pbs_script
+
+        script = generate_pbs_script(
+            self._cfg(shared_tmp_dir="/scratch/my project/tmp"), "/home/me/run.py"
+        )
+        line = next(ln for ln in script.splitlines() if "DASK_SETUP_SHARED_TMP" in ln)
+
+        assert shlex.split(line) == ["export", "DASK_SETUP_SHARED_TMP=/scratch/my project/tmp"]
+
+
+class TestJobqueuePrologueKwarg:
+    """dask-jobqueue renamed env_extra to job_script_prologue in 0.8.
+
+    Passing the old name emitted a FutureWarning on every cluster launch.
+    """
+
+    @pytest.mark.unit
+    def test_uses_the_current_name_when_available(self):
+        from dask_setup.multinode import _jobqueue_prologue_kwarg
+
+        assert _jobqueue_prologue_kwarg(["module load conda"]) == {
+            "job_script_prologue": ["module load conda"]
+        }
+
+    @pytest.mark.unit
+    def test_empty_list_passes_nothing(self):
+        from dask_setup.multinode import _jobqueue_prologue_kwarg
+
+        assert _jobqueue_prologue_kwarg([]) == {}
+
+    @pytest.mark.unit
+    def test_a_real_pbsjob_accepts_it_without_warning(self):
+        import warnings
+
+        from dask_jobqueue.pbs import PBSJob
+
+        from dask_setup.multinode import _jobqueue_prologue_kwarg
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            warnings.simplefilter("error", DeprecationWarning)
+            job = PBSJob(
+                cores=12,
+                memory="32GB",
+                processes=1,
+                queue="normal",
+                **_jobqueue_prologue_kwarg(["module load conda"]),
+            )
+
+        assert "module load conda" in job.job_script()

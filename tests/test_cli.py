@@ -435,9 +435,20 @@ class TestCreateCommand:
         assert result == 0
         mock_manager.save_profile.assert_called_once()
 
-        # Verify config was updated
-        assert base_config.name == "derived_profile"
-        assert base_config.description == "Based on base"
+        # The saved profile carries the new identity ...
+        saved = mock_manager.save_profile.call_args.args[0]
+        assert saved.name == "derived_profile"
+        assert saved.config.name == "derived_profile"
+        assert saved.config.description == "Based on base"
+        # ... and the settings it was derived from.
+        assert saved.config.workload_type == "cpu"
+        assert saved.config.max_workers == 4
+
+        # The base profile must be left alone. Assigning base_profile.config
+        # directly and then setting .name renamed the source in place, which
+        # for a builtin meant renaming it for the rest of the process.
+        assert base_config.name == "base"
+        assert base_config.description == "Base profile"
 
     @pytest.mark.unit
     @patch("dask_setup.cli.ConfigManager")

@@ -755,17 +755,27 @@ class TestConfigManagerIntegration:
             with open(profile_file, "w") as f:
                 yaml.safe_dump(user_profile_data, f)
 
-            # Get profile - should return builtin version (builtin takes precedence)
+            # get_profile() returns the user's version — this is what
+            # setup_dask_client(profile=...) resolves.
             profile = manager.get_profile("development")
-            assert profile.config.workload_type == "mixed"  # Builtin version
-            assert profile.config.max_workers == 2  # Builtin version
-            assert profile.builtin is True  # Builtin version
+            assert profile.config.workload_type == "io"  # User version
+            assert profile.config.max_workers == 10  # User version
+            assert profile.builtin is False
 
-            # List profiles - should show user version in list (different behavior)
+            # list_profiles() must agree — it is what `dask-setup list` and
+            # `dask-setup show` display. The two used to disagree, so the CLI
+            # showed the user's settings while the library silently used the
+            # builtin's.
             profiles = manager.list_profiles()
             dev_profile = profiles["development"]
-            assert dev_profile.config.workload_type == "io"  # User version in list
+            assert dev_profile.config.workload_type == "io"
+            assert dev_profile.config.max_workers == 10
             assert dev_profile.builtin is False
+
+            # An unshadowed builtin still resolves normally
+            builtin = manager.get_profile("production")
+            assert builtin.builtin is True
+            assert builtin.config.reserve_mem_gb == 80.0
 
     @pytest.mark.unit
     def test_error_handling_robustness(self):
@@ -871,3 +881,138 @@ class TestConfigManagerIntegration:
             is_valid, errors, warnings = manager.validate_profile("complete_test")
             assert is_valid is True
             assert len(errors) == 0
+
+
+class TestInheritanceCycleDetection:
+    """Circular based_on chains must raise, not recurse.
+
+    Regression guard: load_profile_from_file threaded an _inheritance_chain
+    for cycle detection but resolved parents via get_profile(), which restarted
+    the chain empty. Both the cycle check and the depth cap were dead code, so
+    a cycle recursed until RecursionError and produced a ~57 KB nested message.
+    """
+
+    @staticmethod
+    def _manager(tmp_path, profiles: dict[str, str]):
+        cfg_dir = tmp_path / "cfg"
+        (cfg_dir / "profiles").mkdir(parents=True)
+        for name, body in profiles.items():
+            (cfg_dir / "profiles" / f"{name}.yaml").write_text(body)
+        return ConfigManager(config_dir=cfg_dir, site_profiles_dir=tmp_path / "nosite")
+
+    @pytest.mark.unit
+    def test_two_profile_cycle(self, tmp_path):
+        manager = self._manager(
+            tmp_path,
+            {
+                "aaa": "name: aaa\nbased_on: bbb\nconfig: {}\n",
+                "bbb": "name: bbb\nbased_on: aaa\nconfig: {}\n",
+            },
+        )
+
+        with pytest.raises(InvalidConfigurationError) as exc:
+            manager.get_profile("aaa")
+
+        assert "Circular profile inheritance detected" in str(exc.value)
+        assert "aaa -> bbb -> aaa" in str(exc.value)
+
+    @pytest.mark.unit
+    def test_three_profile_cycle(self, tmp_path):
+        manager = self._manager(
+            tmp_path,
+            {
+                "p1": "name: p1\nbased_on: p2\nconfig: {}\n",
+                "p2": "name: p2\nbased_on: p3\nconfig: {}\n",
+                "p3": "name: p3\nbased_on: p1\nconfig: {}\n",
+            },
+        )
+
+        with pytest.raises(InvalidConfigurationError) as exc:
+            manager.get_profile("p1")
+
+        assert "p1 -> p2 -> p3 -> p1" in str(exc.value)
+
+    @pytest.mark.unit
+    def test_self_referential_profile(self, tmp_path):
+        manager = self._manager(tmp_path, {"solo": "name: solo\nbased_on: solo\nconfig: {}\n"})
+
+        with pytest.raises(InvalidConfigurationError) as exc:
+            manager.get_profile("solo")
+
+        assert "solo -> solo" in str(exc.value)
+
+    @pytest.mark.unit
+    def test_error_message_stays_short(self, tmp_path):
+        """Nesting the wrapper at every level produced kilobytes of noise."""
+        manager = self._manager(
+            tmp_path,
+            {
+                "aaa": "name: aaa\nbased_on: bbb\nconfig: {}\n",
+                "bbb": "name: bbb\nbased_on: aaa\nconfig: {}\n",
+            },
+        )
+
+        with pytest.raises(InvalidConfigurationError) as exc:
+            manager.get_profile("aaa")
+
+        assert len(str(exc.value)) < 200
+        assert str(exc.value).count("Failed to load") == 1
+
+    @pytest.mark.unit
+    def test_valid_inheritance_from_a_builtin_still_resolves(self, tmp_path):
+        manager = self._manager(
+            tmp_path,
+            {"fat": "name: fat\nbased_on: climate_analysis\nconfig:\n  reserve_mem_gb: 80.0\n"},
+        )
+
+        profile = manager.get_profile("fat")
+
+        assert profile.config.workload_type == "cpu"  # inherited
+        assert profile.config.reserve_mem_gb == 80.0  # overridden
+
+    @pytest.mark.unit
+    def test_multi_level_chain_still_resolves(self, tmp_path):
+        manager = self._manager(
+            tmp_path,
+            {
+                "fat": "name: fat\nbased_on: climate_analysis\nconfig:\n  reserve_mem_gb: 80.0\n",
+                "fatter": "name: fatter\nbased_on: fat\nconfig:\n  max_workers: 12\n",
+            },
+        )
+
+        profile = manager.get_profile("fatter")
+
+        assert profile.config.workload_type == "cpu"  # from climate_analysis
+        assert profile.config.reserve_mem_gb == 80.0  # from fat
+        assert profile.config.max_workers == 12  # its own
+
+    @pytest.mark.unit
+    def test_missing_parent_is_reported_clearly(self, tmp_path):
+        manager = self._manager(
+            tmp_path, {"orphan": "name: orphan\nbased_on: nonexistent\nconfig: {}\n"}
+        )
+
+        with pytest.raises(InvalidConfigurationError) as exc:
+            manager.get_profile("orphan")
+
+        assert "nonexistent" in str(exc.value)
+
+    @pytest.mark.unit
+    def test_listing_survives_a_cyclic_profile(self, tmp_path, capsys):
+        """One broken profile must not take down `dask-setup list`."""
+        manager = self._manager(
+            tmp_path,
+            {
+                "aaa": "name: aaa\nbased_on: bbb\nconfig: {}\n",
+                "bbb": "name: bbb\nbased_on: aaa\nconfig: {}\n",
+                "good": "name: good\nconfig:\n  workload_type: cpu\n",
+            },
+        )
+
+        profiles = manager.list_profiles()
+
+        assert "good" in profiles
+        assert "climate_analysis" in profiles  # builtins still listed
+        warning = capsys.readouterr().err
+        assert "Circular" in warning
+        assert len(warning) < 1000  # not the old multi-kilobyte dump

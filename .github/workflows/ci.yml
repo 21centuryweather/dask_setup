@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Lets the release workflow gate publishing on this exact matrix, instead of
+  # keeping a second copy of it that drifts.
+  workflow_call:
 
 jobs:
   test:

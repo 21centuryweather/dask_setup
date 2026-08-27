@@ -14,6 +14,73 @@ from .types import MemorySpec, TopologySpec
 logger = get_logger("cluster")
 
 
+#: Smallest per-worker memory budget worth creating a worker for.  A Dask
+#: worker with a few hundred MiB spends its life spilling and is slower than
+#: not having it at all.
+MIN_MEM_PER_WORKER_GB: float = 1.0
+
+
+def compute_usable_mem_gb(
+    total_mem_bytes: int,
+    reserve_mem_gb: float = 50.0,
+    max_mem_gb: float | None = None,
+) -> float:
+    """Return the memory (GiB) available to Dask after reservations and caps.
+
+    Args:
+        total_mem_bytes: Total system memory in bytes
+        reserve_mem_gb: Memory to reserve for the OS / page cache in GiB
+        max_mem_gb: Optional cap on total memory usage in GiB
+
+    Returns:
+        Usable memory in GiB.
+
+    Raises:
+        ValueError: If nothing is left after the reservation.
+    """
+    total_mem_gib = total_mem_bytes / (1024**3)
+    effective_total_gb = min(max_mem_gb or total_mem_gib, total_mem_gib)
+    usable_mem_gb = max(0.0, effective_total_gb - reserve_mem_gb)
+
+    if usable_mem_gb <= 0:
+        raise ValueError(
+            f"Not enough memory after reserving {reserve_mem_gb:.1f} GiB from "
+            f"{total_mem_gib:.1f} GiB total. Lower reserve_mem_gb or increase available memory."
+        )
+
+    return usable_mem_gb
+
+
+def fit_workers_to_memory(
+    usable_mem_gb: float,
+    n_workers: int,
+    min_mem_per_worker_gb: float = MIN_MEM_PER_WORKER_GB,
+) -> int:
+    """Return the largest worker count that fits in *usable_mem_gb*.
+
+    Splitting memory across more workers than it can feed does not create
+    capacity — it just hands every worker a budget too small to work with, and
+    since Dask's ``memory_limit`` is per-worker, raising each one back up to a
+    usable floor commits more memory than the node has.  Reducing the worker
+    count is the only way to keep the reservation meaningful.
+
+    Args:
+        usable_mem_gb: Memory available to Dask, from :func:`compute_usable_mem_gb`.
+        n_workers: Worker count the topology asked for.
+        min_mem_per_worker_gb: Smallest acceptable per-worker budget.
+
+    Returns:
+        A worker count in ``[1, n_workers]``.  Never returns 0: one
+        under-provisioned worker still beats a cluster with none, and
+        :func:`compute_usable_mem_gb` has already rejected the truly
+        hopeless cases.
+    """
+    if n_workers <= 0:
+        return 1
+    max_fit = int(usable_mem_gb // min_mem_per_worker_gb)
+    return max(1, min(n_workers, max_fit))
+
+
 def calculate_memory_spec(
     total_mem_bytes: int,
     n_workers: int,
@@ -24,7 +91,8 @@ def calculate_memory_spec(
 
     Args:
         total_mem_bytes: Total system memory in bytes
-        n_workers: Number of workers that will be created
+        n_workers: Number of workers that will be created.  Pass a count that
+            already fits the available memory — see :func:`fit_workers_to_memory`.
         reserve_mem_gb: Memory to reserve for system in GiB
         max_mem_gb: Optional cap on total memory usage in GiB
 
@@ -33,23 +101,30 @@ def calculate_memory_spec(
 
     Raises:
         ValueError: If insufficient memory is available
+
+    Note:
+        If *n_workers* is too high for the available memory, the per-worker
+        budget is raised to :data:`MIN_MEM_PER_WORKER_GB` and a warning is
+        logged — the resulting cluster commits more memory than the node has.
+        Callers should clamp the worker count with :func:`fit_workers_to_memory`
+        first; :func:`~dask_setup.client.setup_dask_client` does.
     """
     total_mem_gib = total_mem_bytes / (1024**3)
+    usable_mem_gb = compute_usable_mem_gb(total_mem_bytes, reserve_mem_gb, max_mem_gb)
 
-    # Apply max_mem_gb cap if specified
-    effective_total_gb = min(max_mem_gb or total_mem_gib, total_mem_gib)
-
-    # Calculate usable memory after reservation
-    usable_mem_gb = max(0.0, effective_total_gb - reserve_mem_gb)
-
-    if usable_mem_gb <= 0:
-        raise ValueError(
-            f"Not enough memory after reserving {reserve_mem_gb:.1f} GiB from "
-            f"{total_mem_gib:.1f} GiB total. Lower reserve_mem_gb or increase available memory."
+    mem_per_worker_gb = usable_mem_gb / n_workers
+    if mem_per_worker_gb < MIN_MEM_PER_WORKER_GB:
+        # Raising the floor here over-commits: n_workers * MIN > usable.
+        # Say so rather than letting the reservation quietly evaporate.
+        mem_per_worker_gb = MIN_MEM_PER_WORKER_GB
+        logger.warning(
+            "Per-worker memory raised to the minimum, which over-commits this node",
+            n_workers=n_workers,
+            usable_mem_gib=f"{usable_mem_gb:.1f}",
+            min_per_worker_gib=f"{MIN_MEM_PER_WORKER_GB:.1f}",
+            committed_gib=f"{n_workers * MIN_MEM_PER_WORKER_GB:.1f}",
+            hint="reduce the worker count with fit_workers_to_memory()",
         )
-
-    # Calculate per-worker memory (minimum 1 GiB per worker)
-    mem_per_worker_gb = max(1.0, usable_mem_gb / n_workers)
     mem_per_worker_bytes = int(mem_per_worker_gb * (1024**3))
 
     return MemorySpec(

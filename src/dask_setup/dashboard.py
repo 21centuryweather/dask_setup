@@ -2,10 +2,41 @@
 
 from __future__ import annotations
 
+import os
 import socket
 from urllib.parse import urlparse
 
 from dask.distributed import Client
+
+#: Set this to name the host users should SSH into for a dashboard tunnel.
+LOGIN_HOST_ENV = "DASK_SETUP_LOGIN_HOST"
+
+
+def get_login_host() -> str:
+    """Best guess at the login node to tunnel through, for the dashboard hint.
+
+    Order of preference:
+
+    1. ``$DASK_SETUP_LOGIN_HOST``, if set.
+    2. The DNS domain of the current node.  On a compute node named
+       ``gadi-cpu-clx-1234.gadi.nci.org.au`` this yields ``gadi.nci.org.au``,
+       which is the correct answer on Gadi and the equivalent answer on any
+       other site -- unlike the ``gadi.nci.org.au`` that used to be printed
+       unconditionally, including to SLURM users who have never heard of it.
+    3. ``"<login-node>"`` as an obvious placeholder when there is no domain
+       to work from (a laptop, a container with no DNS suffix).
+    """
+    override = os.environ.get(LOGIN_HOST_ENV)
+    if override:
+        return override
+
+    fqdn = socket.getfqdn()
+    if "." in fqdn:
+        domain = fqdn.split(".", 1)[1]
+        if domain and domain not in {"local", "localdomain"}:
+            return domain
+
+    return "<login-node>"
 
 
 def get_dashboard_info(client: Client) -> dict[str, str]:
@@ -54,7 +85,7 @@ def format_dashboard_message(client: Client) -> str:
     return (
         f"Dask dashboard: {info['link']}\n"
         f"Tunnel from your laptop (run locally):\n"
-        f"  ssh -N -L 8787:{local_host}:{port} gadi.nci.org.au\n"
+        f"  ssh -N -L 8787:{local_host}:{port} {get_login_host()}\n"
         f"Then open: http://localhost:8787"
     )
 

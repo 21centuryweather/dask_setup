@@ -1,0 +1,2018 @@
+==================================== test session starts =====================================
+platform darwin -- Python 3.12.11, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/green/GitHub/dask_setup
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-5.0.0
+collected 762 items                                                                          
+
+tests/test_benchmark.py ..........FFF..................                                [  4%]
+tests/test_cli.py ..............................................                       [ 10%]
+tests/test_client.py ..............FF..F                                               [ 12%]
+tests/test_cluster.py ............................                                     [ 16%]
+tests/test_compression.py ....................................FFFFF...F                [ 22%]
+tests/test_config.py ................................................................. [ 30%]
+..                                                                                     [ 30%]
+tests/test_config_manager.py .....................................                     [ 35%]
+tests/test_dashboard.py ..........................                                     [ 39%]
+tests/test_error_handling.py .................................                         [ 43%]
+tests/test_exceptions.py ......................                                        [ 46%]
+tests/test_io_patterns.py ..........................                                   [ 49%]
+tests/test_multinode.py ......................F.............................FF.F....FF [ 58%]
+FFF...F...........FF                                                                   [ 60%]
+tests/test_resources.py .............................................................. [ 68%]
+.................................F......FF........FF.FF                                [ 75%]
+tests/test_setup_dask_client.py .........F.......                                      [ 78%]
+tests/test_tempdir.py ..............................                                   [ 82%]
+tests/test_topology.py ........................F...................................... [ 90%]
+..                                                                                     [ 90%]
+tests/test_types.py ...................                                                [ 93%]
+tests/test_xarray_chunks.py ...................F.FF.FFFFFFF......F......FF..FF.F       [100%]
+
+========================================== FAILURES ==========================================
+_________________________ TestChunkImpactResult.test_optimal_result __________________________
+
+self = <tests.test_benchmark.TestChunkImpactResult object at 0x1046f3cb0>
+
+    def test_optimal_result(self):
+>       ci = self._make_chunk_result()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_benchmark.py:201: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.test_benchmark.TestChunkImpactResult object at 0x1046f3cb0>
+
+    def _make_chunk_result(self):
+        from dask_setup.benchmark import BenchmarkResult, ChunkImpactResult
+    
+        results = [
+            BenchmarkResult(
+                name="32 MiB",
+                wall_time_seconds=5.0,
+                n_tasks=50,
+                extra={"chunk_size_mb": 32},
+            ),
+            BenchmarkResult(
+                name="128 MiB",
+                wall_time_seconds=2.0,
+                n_tasks=20,
+                extra={"chunk_size_mb": 128},
+            ),
+            BenchmarkResult(
+                name="512 MiB",
+                wall_time_seconds=3.5,
+                n_tasks=10,
+                extra={"chunk_size_mb": 512},
+            ),
+        ]
+>       return ChunkImpactResult(
+            results=results,
+            chunk_specs=[{"x": 100}, {"x": 400}, {"x": 1600}],
+        )
+E       TypeError: ChunkImpactResult.__init__() missing 1 required positional argument: 'recommended_chunks'
+
+tests/test_benchmark.py:195: TypeError
+____________________ TestChunkImpactResult.test_summary_contains_optimal _____________________
+
+self = <tests.test_benchmark.TestChunkImpactResult object at 0x1059a79e0>
+
+    def test_summary_contains_optimal(self):
+>       ci = self._make_chunk_result()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_benchmark.py:207: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.test_benchmark.TestChunkImpactResult object at 0x1059a79e0>
+
+    def _make_chunk_result(self):
+        from dask_setup.benchmark import BenchmarkResult, ChunkImpactResult
+    
+        results = [
+            BenchmarkResult(
+                name="32 MiB",
+                wall_time_seconds=5.0,
+                n_tasks=50,
+                extra={"chunk_size_mb": 32},
+            ),
+            BenchmarkResult(
+                name="128 MiB",
+                wall_time_seconds=2.0,
+                n_tasks=20,
+                extra={"chunk_size_mb": 128},
+            ),
+            BenchmarkResult(
+                name="512 MiB",
+                wall_time_seconds=3.5,
+                n_tasks=10,
+                extra={"chunk_size_mb": 512},
+            ),
+        ]
+>       return ChunkImpactResult(
+            results=results,
+            chunk_specs=[{"x": 100}, {"x": 400}, {"x": 1600}],
+        )
+E       TypeError: ChunkImpactResult.__init__() missing 1 required positional argument: 'recommended_chunks'
+
+tests/test_benchmark.py:195: TypeError
+_________________________ TestChunkImpactResult.test_results_length __________________________
+
+self = <tests.test_benchmark.TestChunkImpactResult object at 0x1059a7710>
+
+    def test_results_length(self):
+>       ci = self._make_chunk_result()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_benchmark.py:212: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tests.test_benchmark.TestChunkImpactResult object at 0x1059a7710>
+
+    def _make_chunk_result(self):
+        from dask_setup.benchmark import BenchmarkResult, ChunkImpactResult
+    
+        results = [
+            BenchmarkResult(
+                name="32 MiB",
+                wall_time_seconds=5.0,
+                n_tasks=50,
+                extra={"chunk_size_mb": 32},
+            ),
+            BenchmarkResult(
+                name="128 MiB",
+                wall_time_seconds=2.0,
+                n_tasks=20,
+                extra={"chunk_size_mb": 128},
+            ),
+            BenchmarkResult(
+                name="512 MiB",
+                wall_time_seconds=3.5,
+                n_tasks=10,
+                extra={"chunk_size_mb": 512},
+            ),
+        ]
+>       return ChunkImpactResult(
+            results=results,
+            chunk_specs=[{"x": 100}, {"x": 400}, {"x": 1600}],
+        )
+E       TypeError: ChunkImpactResult.__init__() missing 1 required positional argument: 'recommended_chunks'
+
+tests/test_benchmark.py:195: TypeError
+__________________ TestSetupDaskClient.test_setup_dask_client_silence_logs ___________________
+
+self = <tests.test_client.TestSetupDaskClient object at 0x10e96ce30>
+mock_print = <MagicMock name='print' id='4602224208'>
+mock_resolve_config = <MagicMock name='_resolve_configuration' id='4602454640'>
+mock_detect_resources = <MagicMock name='detect_resources' id='4602460400'>
+mock_create_temp_dir = <MagicMock name='create_dask_temp_dir' id='4602541984'>
+mock_decide_topology = <MagicMock name='decide_topology' id='4602538096'>
+mock_validate_topology = <MagicMock name='validate_topology' id='4602534688'>
+mock_calculate_memory = <MagicMock name='calculate_memory_spec' id='4602529744'>
+mock_create_cluster = <MagicMock name='create_cluster' id='4602491680'>
+mock_client_class = <MagicMock name='Client' id='4602484576'>
+mock_print_dashboard = <MagicMock name='print_dashboard_info' id='4602488752'>
+
+    @pytest.mark.unit
+    @patch("dask_setup.client.print_dashboard_info")
+    @patch("dask_setup.client.Client")
+    @patch("dask_setup.client.create_cluster")
+    @patch("dask_setup.client.calculate_memory_spec")
+    @patch("dask_setup.client.validate_topology")
+    @patch("dask_setup.client.decide_topology")
+    @patch("dask_setup.client.create_dask_temp_dir")
+    @patch("dask_setup.client.detect_resources")
+    @patch("dask_setup.client._resolve_configuration")
+    @patch("builtins.print")
+    def test_setup_dask_client_silence_logs(
+        self,
+        mock_print,
+        mock_resolve_config,
+        mock_detect_resources,
+        mock_create_temp_dir,
+        mock_decide_topology,
+        mock_validate_topology,
+        mock_calculate_memory,
+        mock_create_cluster,
+        mock_client_class,
+        mock_print_dashboard,
+    ):
+        """Test setup with silent mode enabled."""
+        config = DaskSetupConfig(dashboard=True, silence_logs=True)
+        mock_resolve_config.return_value = config
+        mock_detect_resources.return_value = self.test_resources
+        mock_create_temp_dir.return_value = "/tmp/dask-temp"
+        mock_decide_topology.return_value = self.test_topology
+        mock_calculate_memory.return_value = self.test_memory_spec
+    
+        mock_cluster = MagicMock()
+        mock_create_cluster.return_value = mock_cluster
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+    
+        setup_dask_client()
+    
+        # Verify dashboard info is called with silent=True
+        mock_print_dashboard.assert_called_once_with(mock_client, silent=True)
+    
+        # Should still print summary info (separate from dashboard logging)
+>       assert mock_print.called
+E       AssertionError: assert False
+E        +  where False = <MagicMock name='print' id='4602224208'>.called
+
+tests/test_client.py:702: AssertionError
+------------------------------------ Captured stderr call ------------------------------------
+INFO     [client] Starting Dask client setup (workload_type=io | environment=script)
+INFO     [client] Temp/spill dir: /tmp/dask-temp
+INFO     [client] Workers: 4 | threads/worker: 2 | processes: True
+INFO     [client] Mem: total ~32.0 GiB | usable ~30.0 GiB | per-worker ~7.0 GiB
+INFO     [client] Compression: spill=auto | comm=False
+INFO     [client] Dask client ready
+________________ TestSetupDaskClient.test_setup_dask_client_output_formatting ________________
+
+self = <tests.test_client.TestSetupDaskClient object at 0x10e96cfe0>
+mock_print = <MagicMock name='print' id='4602421536'>
+mock_resolve_config = <MagicMock name='_resolve_configuration' id='4602373680'>
+mock_detect_resources = <MagicMock name='detect_resources' id='4602375936'>
+mock_create_temp_dir = <MagicMock name='create_dask_temp_dir' id='4602379200'>
+mock_decide_topology = <MagicMock name='decide_topology' id='4602378480'>
+mock_validate_topology = <MagicMock name='validate_topology' id='4587923520'>
+mock_calculate_memory = <MagicMock name='calculate_memory_spec' id='4602345712'>
+mock_create_cluster = <MagicMock name='create_cluster' id='4602428160'>
+mock_client_class = <MagicMock name='Client' id='4602342736'>
+mock_print_dashboard = <MagicMock name='print_dashboard_info' id='4602341440'>
+
+    @pytest.mark.unit
+    @patch("dask_setup.client.print_dashboard_info")
+    @patch("dask_setup.client.Client")
+    @patch("dask_setup.client.create_cluster")
+    @patch("dask_setup.client.calculate_memory_spec")
+    @patch("dask_setup.client.validate_topology")
+    @patch("dask_setup.client.decide_topology")
+    @patch("dask_setup.client.create_dask_temp_dir")
+    @patch("dask_setup.client.detect_resources")
+    @patch("dask_setup.client._resolve_configuration")
+    @patch("builtins.print")
+    def test_setup_dask_client_output_formatting(
+        self,
+        mock_print,
+        mock_resolve_config,
+        mock_detect_resources,
+        mock_create_temp_dir,
+        mock_decide_topology,
+        mock_validate_topology,
+        mock_calculate_memory,
+        mock_create_cluster,
+        mock_client_class,
+        mock_print_dashboard,
+    ):
+        """Test that summary output contains expected information."""
+        config = DaskSetupConfig(dashboard=False)  # Disable dashboard for cleaner output test
+        mock_resolve_config.return_value = config
+        mock_detect_resources.return_value = self.test_resources
+        mock_create_temp_dir.return_value = "/tmp/dask-test-dir"
+        mock_decide_topology.return_value = self.test_topology
+        mock_calculate_memory.return_value = self.test_memory_spec
+    
+        mock_cluster = MagicMock()
+        mock_create_cluster.return_value = mock_cluster
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+    
+        setup_dask_client()
+    
+        # Check that summary information was printed
+        print_calls = [call[0][0] for call in mock_print.call_args_list]
+        summary = "".join(print_calls)
+    
+        # Should contain key information
+>       assert "[setup_dask_client]" in summary
+E       AssertionError: assert '[setup_dask_client]' in ''
+
+tests/test_client.py:752: AssertionError
+------------------------------------ Captured stderr call ------------------------------------
+INFO     [client] Starting Dask client setup (workload_type=io | environment=script)
+INFO     [client] Temp/spill dir: /tmp/dask-test-dir
+INFO     [client] Workers: 4 | threads/worker: 2 | processes: True
+INFO     [client] Mem: total ~32.0 GiB | usable ~30.0 GiB | per-worker ~7.0 GiB
+INFO     [client] Compression: spill=auto | comm=False
+INFO     [client] Dask client ready
+__________________ TestClientIntegration.test_parameter_validation_coverage __________________
+
+self = <tests.test_client.TestClientIntegration object at 0x10e96d490>
+
+    @pytest.mark.unit
+    def test_parameter_validation_coverage(self):
+        """Test that all documented parameters are handled by the function signature."""
+        import inspect
+    
+        sig = inspect.signature(setup_dask_client)
+        param_names = set(sig.parameters.keys())
+    
+        expected_params = {
+            "workload_type",
+            "max_workers",
+            "reserve_mem_gb",
+            "max_mem_gb",
+            "dashboard",
+            "adaptive",
+            "min_workers",
+            "profile",
+        }
+    
+        # All expected parameters should be in the signature
+        assert expected_params.issubset(param_names)
+    
+        # Check parameter defaults match documentation
+        assert sig.parameters["workload_type"].default == "io"
+        assert sig.parameters["max_workers"].default is None
+>       assert sig.parameters["reserve_mem_gb"].default == 50.0
+E       assert None == 50.0
+E        +  where None = <Parameter "reserve_mem_gb: 'float | None' = None">.default
+
+tests/test_client.py:928: AssertionError
+_____________ TestSpillThreadsConfiguration.test_spill_threads_with_dask_config ______________
+
+self = <tests.test_compression.TestSpillThreadsConfiguration object at 0x10e9c8230>
+
+    def test_spill_threads_with_dask_config(self):
+        """Test spill_threads is applied to Dask configuration."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+    
+            # Test with threads specified
+            configure_dask_settings(temp_dir=temp_path, spill_threads=6)
+    
+            # Verify Dask configuration was updated
+>           assert dask.config.get("distributed.p2p.threads") == 6
+E           AssertionError: assert None == 6
+E            +  where None = <function get at 0x105b12700>('distributed.p2p.threads')
+E            +    where <function get at 0x105b12700> = <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'>.get
+E            +      where <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'> = dask.config
+
+tests/test_compression.py:314: AssertionError
+___________ TestSpillThreadsConfiguration.test_spill_threads_dask_integration[1-1] ___________
+
+self = <tests.test_compression.TestSpillThreadsConfiguration object at 0x10e9c8440>
+threads = 1, expected = 1
+
+    @pytest.mark.parametrize(
+        "threads,expected",
+        [
+            (1, 1),
+            (4, 4),
+            (8, 8),
+            (16, 16),
+            (None, None),
+        ],
+    )
+    def test_spill_threads_dask_integration(self, threads, expected):
+        """Test various spill_threads values integrate correctly with Dask."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+    
+            configure_dask_settings(
+                temp_dir=temp_path,
+                spill_threads=threads,
+                spill_compression="lz4",
+                comm_compression=True,
+            )
+    
+            # Check spill threads configuration
+            if expected is not None:
+>               assert dask.config.get("distributed.p2p.threads") == expected
+E               AssertionError: assert None == 1
+E                +  where None = <function get at 0x105b12700>('distributed.p2p.threads')
+E                +    where <function get at 0x105b12700> = <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'>.get
+E                +      where <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'> = dask.config
+
+tests/test_compression.py:347: AssertionError
+___________ TestSpillThreadsConfiguration.test_spill_threads_dask_integration[4-4] ___________
+
+self = <tests.test_compression.TestSpillThreadsConfiguration object at 0x10e9c8710>
+threads = 4, expected = 4
+
+    @pytest.mark.parametrize(
+        "threads,expected",
+        [
+            (1, 1),
+            (4, 4),
+            (8, 8),
+            (16, 16),
+            (None, None),
+        ],
+    )
+    def test_spill_threads_dask_integration(self, threads, expected):
+        """Test various spill_threads values integrate correctly with Dask."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+    
+            configure_dask_settings(
+                temp_dir=temp_path,
+                spill_threads=threads,
+                spill_compression="lz4",
+                comm_compression=True,
+            )
+    
+            # Check spill threads configuration
+            if expected is not None:
+>               assert dask.config.get("distributed.p2p.threads") == expected
+E               AssertionError: assert None == 4
+E                +  where None = <function get at 0x105b12700>('distributed.p2p.threads')
+E                +    where <function get at 0x105b12700> = <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'>.get
+E                +      where <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'> = dask.config
+
+tests/test_compression.py:347: AssertionError
+___________ TestSpillThreadsConfiguration.test_spill_threads_dask_integration[8-8] ___________
+
+self = <tests.test_compression.TestSpillThreadsConfiguration object at 0x10e9c87d0>
+threads = 8, expected = 8
+
+    @pytest.mark.parametrize(
+        "threads,expected",
+        [
+            (1, 1),
+            (4, 4),
+            (8, 8),
+            (16, 16),
+            (None, None),
+        ],
+    )
+    def test_spill_threads_dask_integration(self, threads, expected):
+        """Test various spill_threads values integrate correctly with Dask."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+    
+            configure_dask_settings(
+                temp_dir=temp_path,
+                spill_threads=threads,
+                spill_compression="lz4",
+                comm_compression=True,
+            )
+    
+            # Check spill threads configuration
+            if expected is not None:
+>               assert dask.config.get("distributed.p2p.threads") == expected
+E               AssertionError: assert None == 8
+E                +  where None = <function get at 0x105b12700>('distributed.p2p.threads')
+E                +    where <function get at 0x105b12700> = <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'>.get
+E                +      where <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'> = dask.config
+
+tests/test_compression.py:347: AssertionError
+__________ TestSpillThreadsConfiguration.test_spill_threads_dask_integration[16-16] __________
+
+self = <tests.test_compression.TestSpillThreadsConfiguration object at 0x10e9c8890>
+threads = 16, expected = 16
+
+    @pytest.mark.parametrize(
+        "threads,expected",
+        [
+            (1, 1),
+            (4, 4),
+            (8, 8),
+            (16, 16),
+            (None, None),
+        ],
+    )
+    def test_spill_threads_dask_integration(self, threads, expected):
+        """Test various spill_threads values integrate correctly with Dask."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+    
+            configure_dask_settings(
+                temp_dir=temp_path,
+                spill_threads=threads,
+                spill_compression="lz4",
+                comm_compression=True,
+            )
+    
+            # Check spill threads configuration
+            if expected is not None:
+>               assert dask.config.get("distributed.p2p.threads") == expected
+E               AssertionError: assert None == 16
+E                +  where None = <function get at 0x105b12700>('distributed.p2p.threads')
+E                +    where <function get at 0x105b12700> = <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'>.get
+E                +      where <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'> = dask.config
+
+tests/test_compression.py:347: AssertionError
+_____________ TestSpillThreadsEndToEnd.test_spill_threads_end_to_end_integration _____________
+
+self = <tests.test_compression.TestSpillThreadsEndToEnd object at 0x10e9c8e30>
+
+    def test_spill_threads_end_to_end_integration(self):
+        """Test spill_threads works through complete configuration process."""
+        config = DaskSetupConfig(
+            workload_type="cpu",
+            spill_threads=8,
+            spill_compression="zstd",
+            comm_compression=True,
+            max_workers=2,
+            reserve_mem_gb=4.0,
+        )
+    
+        # Verify configuration is valid
+        config.validate()
+    
+        # Test serialization round-trip
+        config_dict = config.to_dict()
+        restored_config = DaskSetupConfig.from_dict(config_dict)
+    
+        assert restored_config.spill_threads == config.spill_threads
+        assert restored_config.spill_compression == config.spill_compression
+        assert restored_config.comm_compression == config.comm_compression
+        assert restored_config.workload_type == config.workload_type
+    
+        # Test Dask configuration application
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+    
+            configure_dask_settings(
+                temp_dir=temp_path,
+                spill_threads=config.spill_threads,
+                spill_compression=config.spill_compression,
+                comm_compression=config.comm_compression,
+            )
+    
+            # Verify all settings applied correctly
+>           assert dask.config.get("distributed.p2p.threads") == 8
+E           AssertionError: assert None == 8
+E            +  where None = <function get at 0x105b12700>('distributed.p2p.threads')
+E            +    where <function get at 0x105b12700> = <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'>.get
+E            +      where <module 'dask.config' from '/Users/green/miniforge3/lib/python3.12/site-packages/dask/config.py'> = dask.config
+
+tests/test_compression.py:437: AssertionError
+__________________ TestDetectClusterMode.test_slurm_takes_priority_over_pbs __________________
+
+self = <tests.test_multinode.TestDetectClusterMode object at 0x10eb84ec0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11273da90>
+
+    def test_slurm_takes_priority_over_pbs(self, monkeypatch):
+        """SLURM indicators take priority when both are set."""
+        from dask_setup.multinode import detect_cluster_mode
+    
+        monkeypatch.setenv("SLURM_JOB_ID", "888")
+        monkeypatch.setenv("PBS_JOBID", "444")
+>       assert detect_cluster_mode() == "slurm"
+E       AssertionError: assert 'pbs' == 'slurm'
+E         
+E         - slurm
+E         + pbs
+
+tests/test_multinode.py:222: AssertionError
+______________ TestSetupDaskClientMode.test_setup_dask_client_dispatches_to_pbs ______________
+
+self = <tests.test_multinode.TestSetupDaskClientMode object at 0x10eb87290>
+
+    def test_setup_dask_client_dispatches_to_pbs(self):
+        """When mode='pbs', setup_dask_client should call setup_pbs_cluster."""
+        from dask_setup.multinode import MultiNodeConfig
+    
+        mock_client = MagicMock()
+        mock_cluster = MagicMock()
+        mock_cluster.scheduler_address = "tcp://127.0.0.1:8786"
+    
+>       with patch(
+            "dask_setup.client.setup_pbs_cluster",
+            return_value=(mock_client, mock_cluster, None),
+        ) as mock_pbs:
+
+tests/test_multinode.py:616: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../miniforge3/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x112706750>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'dask_setup.client' from '/Users/green/GitHub/dask_setup/src/dask_setup/client.py'> does not have the attribute 'setup_pbs_cluster'
+
+../../miniforge3/lib/python3.12/unittest/mock.py:1437: AttributeError
+_____________ TestSetupDaskClientMode.test_setup_dask_client_dispatches_to_slurm _____________
+
+self = <tests.test_multinode.TestSetupDaskClientMode object at 0x10eb87410>
+
+    def test_setup_dask_client_dispatches_to_slurm(self):
+        """When mode='slurm', setup_dask_client should call setup_slurm_cluster."""
+        from dask_setup.multinode import MultiNodeConfig
+    
+        mock_client = MagicMock()
+        mock_cluster = MagicMock()
+        mock_cluster.scheduler_address = "tcp://127.0.0.1:8786"
+    
+>       with patch(
+            "dask_setup.client.setup_slurm_cluster",
+            return_value=(mock_client, mock_cluster, None),
+        ) as mock_slurm:
+
+tests/test_multinode.py:638: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../miniforge3/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x112705a30>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'dask_setup.client' from '/Users/green/GitHub/dask_setup/src/dask_setup/client.py'> does not have the attribute 'setup_slurm_cluster'
+
+../../miniforge3/lib/python3.12/unittest/mock.py:1437: AttributeError
+_____________________________________ test_version_is_2 ______________________________________
+
+    def test_version_is_2():
+        import dask_setup
+    
+>       assert dask_setup.__version__.startswith("2.")
+E       AssertionError: assert False
+E        +  where False = <built-in method startswith of str object at 0x105a1d110>('2.')
+E        +    where <built-in method startswith of str object at 0x105a1d110> = '1.8.0'.startswith
+E        +      where '1.8.0' = <module 'dask_setup' from '/Users/green/GitHub/dask_setup/src/dask_setup/__init__.py'>.__version__
+
+tests/test_multinode.py:671: AssertionError
+______________ TestSetupPBSClusterWait.test_wait_for_workers_called_by_default _______________
+
+self = <tests.test_multinode.TestSetupPBSClusterWait object at 0x10eb87a10>
+
+    def test_wait_for_workers_called_by_default(self):
+        """setup_pbs_cluster should call _wait_for_workers when wait_for_workers=True."""
+        from dask_setup.multinode import setup_pbs_cluster
+    
+        mock_cluster, mock_client = self._make_mocks()
+    
+        with (
+            patch("dask_setup.multinode.PBSCluster", return_value=mock_cluster),
+>           patch("dask_setup.multinode.Client", return_value=mock_client),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            patch("dask_setup.multinode._wait_for_workers") as mock_wait,
+        ):
+
+tests/test_multinode.py:761: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../miniforge3/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x1126fd880>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/dask_setup/multinode.py'> does not have the attribute 'Client'
+
+../../miniforge3/lib/python3.12/unittest/mock.py:1437: AttributeError
+__________________ TestSetupPBSClusterWait.test_wait_skipped_when_disabled ___________________
+
+self = <tests.test_multinode.TestSetupPBSClusterWait object at 0x10eb87530>
+
+    def test_wait_skipped_when_disabled(self):
+        """setup_pbs_cluster should not call _wait_for_workers when wait_for_workers=False."""
+        from dask_setup.multinode import setup_pbs_cluster
+    
+        mock_cluster, mock_client = self._make_mocks()
+    
+        with (
+            patch("dask_setup.multinode.PBSCluster", return_value=mock_cluster),
+>           patch("dask_setup.multinode.Client", return_value=mock_client),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            patch("dask_setup.multinode._wait_for_workers") as mock_wait,
+        ):
+
+tests/test_multinode.py:790: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../miniforge3/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x1125feff0>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/dask_setup/multinode.py'> does not have the attribute 'Client'
+
+../../miniforge3/lib/python3.12/unittest/mock.py:1437: AttributeError
+___________________ TestSetupPBSClusterWait.test_timeout_error_propagates ____________________
+
+self = <tests.test_multinode.TestSetupPBSClusterWait object at 0x10eb87200>
+
+    def test_timeout_error_propagates(self):
+        """A TimeoutError from _wait_for_workers should propagate to the caller."""
+        from dask_setup.multinode import setup_pbs_cluster
+    
+        mock_cluster, mock_client = self._make_mocks()
+    
+        with (
+            patch("dask_setup.multinode.PBSCluster", return_value=mock_cluster),
+>           patch("dask_setup.multinode.Client", return_value=mock_client),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            patch(
+                "dask_setup.multinode._wait_for_workers",
+                side_effect=TimeoutError("no workers"),
+            ),
+        ):
+
+tests/test_multinode.py:814: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../miniforge3/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x1127107a0>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/dask_setup/multinode.py'> does not have the attribute 'Client'
+
+../../miniforge3/lib/python3.12/unittest/mock.py:1437: AttributeError
+_____________ TestSetupSLURMClusterWait.test_wait_for_workers_called_by_default ______________
+
+self = <tests.test_multinode.TestSetupSLURMClusterWait object at 0x10eb86b70>
+
+    def test_wait_for_workers_called_by_default(self):
+        from dask_setup.multinode import setup_slurm_cluster
+    
+        mock_cluster, mock_client = self._make_mocks()
+    
+        with (
+            patch("dask_setup.multinode.SLURMCluster", return_value=mock_cluster),
+>           patch("dask_setup.multinode.Client", return_value=mock_client),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            patch("dask_setup.multinode._wait_for_workers") as mock_wait,
+        ):
+
+tests/test_multinode.py:854: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../miniforge3/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x11273dc10>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/dask_setup/multinode.py'> does not have the attribute 'Client'
+
+../../miniforge3/lib/python3.12/unittest/mock.py:1437: AttributeError
+_________________ TestSetupSLURMClusterWait.test_wait_skipped_when_disabled __________________
+
+self = <tests.test_multinode.TestSetupSLURMClusterWait object at 0x10eb867e0>
+
+    def test_wait_skipped_when_disabled(self):
+        from dask_setup.multinode import setup_slurm_cluster
+    
+        mock_cluster, mock_client = self._make_mocks()
+    
+        with (
+            patch("dask_setup.multinode.SLURMCluster", return_value=mock_cluster),
+>           patch("dask_setup.multinode.Client", return_value=mock_client),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            patch("dask_setup.multinode._wait_for_workers") as mock_wait,
+        ):
+
+tests/test_multinode.py:880: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../miniforge3/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x1127043b0>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/dask_setup/multinode.py'> does not have the attribute 'Client'
+
+../../miniforge3/lib/python3.12/unittest/mock.py:1437: AttributeError
+___________ TestDetectClusterModeInteractive.test_slurm_interactive_no_batch_flag ____________
+
+self = <tests.test_multinode.TestDetectClusterModeInteractive object at 0x10eb87c80>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x112704260>
+
+    def test_slurm_interactive_no_batch_flag(self, monkeypatch):
+        """SLURM_JOB_ID set without SLURM_BATCH_FLAG=1 → 'interactive'."""
+        from dask_setup.multinode import detect_cluster_mode
+    
+        monkeypatch.setenv("SLURM_JOB_ID", "9876")
+        monkeypatch.setenv("SLURM_NODELIST", "gpu-node-01")
+        monkeypatch.delenv("SLURM_BATCH_FLAG", raising=False)
+        # PBS env must be absent for SLURM path to be reached
+        monkeypatch.delenv("PBS_JOBID", raising=False)
+        monkeypatch.delenv("PBS_NODEFILE", raising=False)
+        monkeypatch.delenv("PBS_ENVIRONMENT", raising=False)
+    
+>       assert detect_cluster_mode() == "interactive"
+E       AssertionError: assert 'slurm' == 'interactive'
+E         
+E         - interactive
+E         + slurm
+
+tests/test_multinode.py:946: AssertionError
+___________ TestSetupDaskClientInteractiveDispatch.test_explicit_interactive_mode ____________
+
+self = <tests.test_multinode.TestSetupDaskClientInteractiveDispatch object at 0x10eba9400>
+
+    def test_explicit_interactive_mode(self):
+        """mode='interactive' always calls setup_interactive_cluster."""
+        mock_client = MagicMock()
+        mock_cluster = MagicMock()
+        mock_cluster.scheduler_address = "tcp://127.0.0.1:8786"
+    
+>       with patch(
+            "dask_setup.client.setup_interactive_cluster",
+            return_value=(mock_client, mock_cluster, "/tmp/dask"),
+        ) as mock_interactive:
+
+tests/test_multinode.py:1171: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../miniforge3/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x112519f40>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'dask_setup.client' from '/Users/green/GitHub/dask_setup/src/dask_setup/client.py'> does not have the attribute 'setup_interactive_cluster'
+
+../../miniforge3/lib/python3.12/unittest/mock.py:1437: AttributeError
+_ TestSetupDaskClientInteractiveDispatch.test_auto_mode_pbs_interactive_dispatches_correctly _
+
+self = <tests.test_multinode.TestSetupDaskClientInteractiveDispatch object at 0x10eb87d70>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b1c9f40>
+
+    def test_auto_mode_pbs_interactive_dispatches_correctly(self, monkeypatch):
+        """mode='auto' with PBS_ENVIRONMENT=PBS_INTERACTIVE → setup_interactive_cluster."""
+        monkeypatch.setenv("PBS_JOBID", "12345.gadi")
+        monkeypatch.setenv("PBS_NODEFILE", "/fake/nodefile")
+        monkeypatch.setenv("PBS_ENVIRONMENT", "PBS_INTERACTIVE")
+    
+        mock_client = MagicMock()
+        mock_cluster = MagicMock()
+    
+>       with patch(
+            "dask_setup.client.setup_interactive_cluster",
+            return_value=(mock_client, mock_cluster, ""),
+        ) as mock_interactive:
+
+tests/test_multinode.py:1191: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../miniforge3/lib/python3.12/unittest/mock.py:1467: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x10ea1b890>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'dask_setup.client' from '/Users/green/GitHub/dask_setup/src/dask_setup/client.py'> does not have the attribute 'setup_interactive_cluster'
+
+../../miniforge3/lib/python3.12/unittest/mock.py:1437: AttributeError
+__________ TestEnhancedMemoryParsingFeatures.test_overflow_protection_with_logging ___________
+
+self = <tests.test_resources.TestEnhancedMemoryParsingFeatures object at 0x10ebfa570>
+caplog = <_pytest.logging.LogCaptureFixture object at 0x1125534a0>
+
+    @pytest.mark.unit
+    def test_overflow_protection_with_logging(self, caplog):
+        """Test overflow protection logs warnings appropriately."""
+        import logging
+    
+        caplog.set_level(logging.WARNING)
+    
+        # Test very large value that should trigger overflow protection
+        result = _parse_mem_bytes("999999999eb")  # Way beyond 8 EiB limit
+        assert result is None
+    
+        # Check that warning was logged
+        warning_messages = [
+            record.message for record in caplog.records if record.levelno == logging.WARNING
+        ]
+>       assert any("exceeds maximum supported" in msg for msg in warning_messages)
+E       assert False
+E        +  where False = any(<generator object TestEnhancedMemoryParsingFeatures.test_overflow_protection_with_logging.<locals>.<genexpr> at 0x11eb5ee90>)
+
+tests/test_resources.py:653: AssertionError
+------------------------------------ Captured stderr call ------------------------------------
+WARNING  [resources] Memory value '999999999eb' exceeds maximum supported (8 EiB)
+___________ TestMemoryValidationFeatures.test_validate_memory_value_small_warning ____________
+
+self = <tests.test_resources.TestMemoryValidationFeatures object at 0x10ec1d0d0>
+caplog = <_pytest.logging.LogCaptureFixture object at 0x112602c90>
+
+    @pytest.mark.unit
+    def test_validate_memory_value_small_warning(self, caplog):
+        """Test validation warnings for small memory values."""
+        import logging
+    
+        from dask_setup.resources import validate_memory_value
+    
+        caplog.set_level(logging.WARNING)
+    
+        # Test very small memory (< 32 MiB)
+        small_mem = 16 * 1024 * 1024  # 16 MiB
+        validate_memory_value(small_mem, "test memory")
+    
+        # Check that warning was logged
+        warning_messages = [
+            record.message for record in caplog.records if record.levelno == logging.WARNING
+        ]
+>       assert any("Very small test memory value" in msg for msg in warning_messages)
+E       assert False
+E        +  where False = any(<generator object TestMemoryValidationFeatures.test_validate_memory_value_small_warning.<locals>.<genexpr> at 0x11eb99630>)
+
+tests/test_resources.py:785: AssertionError
+------------------------------------ Captured stderr call ------------------------------------
+WARNING  [resources] Very small test memory value: 16.0 MiB. This may be insufficient for typical Dask workloads.
+___________ TestMemoryValidationFeatures.test_validate_memory_value_large_warning ____________
+
+self = <tests.test_resources.TestMemoryValidationFeatures object at 0x10ec1d250>
+caplog = <_pytest.logging.LogCaptureFixture object at 0x1125755e0>
+
+    @pytest.mark.unit
+    def test_validate_memory_value_large_warning(self, caplog):
+        """Test validation warnings for large memory values."""
+        import logging
+    
+        from dask_setup.resources import validate_memory_value
+    
+        caplog.set_level(logging.WARNING)
+    
+        # Test very large memory (> 4 TiB)
+        large_mem = 5 * 1024**4  # 5 TiB
+        validate_memory_value(large_mem, "system memory")
+    
+        # Check that warning was logged
+        warning_messages = [
+            record.message for record in caplog.records if record.levelno == logging.WARNING
+        ]
+>       assert any("Very large system memory value" in msg for msg in warning_messages)
+E       assert False
+E        +  where False = any(<generator object TestMemoryValidationFeatures.test_validate_memory_value_large_warning.<locals>.<genexpr> at 0x11eb5cfb0>)
+
+tests/test_resources.py:805: AssertionError
+------------------------------------ Captured stderr call ------------------------------------
+WARNING  [resources] Very large system memory value: 5.0 TiB. Verify this is correct for your system.
+__________________ TestParsePBSMemBytes.test_bare_integer_treated_as_bytes ___________________
+
+self = <tests.test_resources.TestParsePBSMemBytes object at 0x10ec1e060>
+
+    @pytest.mark.unit
+    def test_bare_integer_treated_as_bytes(self):
+        """Bare integers must NOT be multiplied by 1024² (MB scaling)."""
+        from dask_setup.resources import _parse_pbs_mem_bytes
+    
+        # 496 GiB as Gadi reports it in PBS_MEM
+        gadi_496_gib = 532_575_944_704
+        result = _parse_pbs_mem_bytes(str(gadi_496_gib))
+>       assert result == gadi_496_gib
+E       assert 558446353793941504 == 532575944704
+
+tests/test_resources.py:925: AssertionError
+_______________ TestParsePBSMemBytes.test_bare_integer_not_inflated_like_slurm _______________
+
+self = <tests.test_resources.TestParsePBSMemBytes object at 0x10ec1e1e0>
+
+    @pytest.mark.unit
+    def test_bare_integer_not_inflated_like_slurm(self):
+        """Ensure we do NOT get the 1,048,576× inflation of _parse_mem_bytes."""
+        from dask_setup.resources import _parse_mem_bytes, _parse_pbs_mem_bytes
+    
+        raw = "532575944704"
+        pbs_result = _parse_pbs_mem_bytes(raw)
+        slurm_result = _parse_mem_bytes(raw)  # old (wrong) behaviour for PBS
+    
+        # pbs result should be many orders of magnitude smaller
+>       assert pbs_result == int(raw)
+E       AssertionError: assert 558446353793941504 == 532575944704
+E        +  where 532575944704 = int('532575944704')
+
+tests/test_resources.py:937: AssertionError
+___________________ TestParsePBSMemBytes.test_small_byte_count_round_trips ___________________
+
+self = <tests.test_resources.TestParsePBSMemBytes object at 0x10ebf9310>
+
+    @pytest.mark.unit
+    def test_small_byte_count_round_trips(self):
+        from dask_setup.resources import _parse_pbs_mem_bytes
+    
+>       assert _parse_pbs_mem_bytes("1024") == 1024  # 1 KiB expressed in bytes
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: assert 1073741824 == 1024
+E        +  where 1073741824 = <function _parse_pbs_mem_bytes at 0x107073740>('1024')
+
+tests/test_resources.py:954: AssertionError
+_______________ TestParsePBSMemBytes.test_detect_pbs_resources_uses_pbs_parser _______________
+
+self = <tests.test_resources.TestParsePBSMemBytes object at 0x10ec1dbe0>
+mock_vmem = <MagicMock name='virtual_memory' id='4602364944'>
+mock_getenv = <MagicMock name='getenv' id='4540439472'>
+
+    @pytest.mark.unit
+    @patch("dask_setup.resources.os.getenv")
+    @patch("dask_setup.resources.psutil.virtual_memory")
+    def test_detect_pbs_resources_uses_pbs_parser(self, mock_vmem, mock_getenv):
+        """_detect_pbs_resources must use _parse_pbs_mem_bytes, not _parse_mem_bytes."""
+        # 496 GiB in bytes — what Gadi sets PBS_MEM to
+        gadi_496_gib = 532_575_944_704
+    
+        def side_effect(key, *args, **kwargs):
+            return {
+                "NCPUS": "104",
+                "PBS_NCPUS": None,
+                "PBS_VMEM": None,
+                "PBS_MEM": str(gadi_496_gib),
+            }.get(key)
+    
+        mock_getenv.side_effect = side_effect
+    
+        result = _detect_pbs_resources()
+        assert result is not None
+        assert result.total_cores == 104
+        # Should be ~496 GiB, not ~520 million GiB
+>       assert result.total_mem_bytes == gadi_496_gib
+E       AssertionError: assert 558446353793941504 == 532575944704
+E        +  where 558446353793941504 = ResourceSpec(total_cores=104, total_mem_bytes=558446353793941504, detection_method='PBS').total_mem_bytes
+
+tests/test_resources.py:978: AssertionError
+__________________________________ test_dashboard_disabled ___________________________________
+
+isolated_env = environ({'COLORTERM': 'truecolor', 'COMMAND_MODE': 'unix2003', 'DISPLAY': '/private/tmp/com.apple.launchd.jdUXHrBydv/o...OLD_': '65536', 'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1', 'PYTHONHASHSEED': '6640'})
+mock_psutil = {'cpu_count': <tests.conftest.mock_psutil.<locals>.SynchronizedMock object at 0x1125138f0>, 'virtual_memory': <tests.conftest.mock_psutil.<locals>.SynchronizedMemoryMock object at 0x1125137d0>}
+capsys = <_pytest.capture.CaptureFixture object at 0x112513860>
+
+    def test_dashboard_disabled(isolated_env, mock_psutil, capsys):
+        """Test that dashboard=False suppresses dashboard output."""
+        client, cluster, temp_dir = setup_dask_client(
+            workload_type="cpu", max_workers=1, dashboard=False, reserve_mem_gb=2.0
+        )
+    
+        try:
+            captured = capsys.readouterr()
+            # Should not contain dashboard links or SSH tunnel instructions
+            assert "dashboard" not in captured.out.lower()
+            assert "tunnel" not in captured.out.lower()
+            assert "ssh" not in captured.out.lower()
+    
+            # Should still contain basic setup info
+>           assert "setup_dask_client" in captured.out
+E           AssertionError: assert 'setup_dask_client' in ''
+E            +  where '' = CaptureResult(out='', err='').out
+
+tests/test_setup_dask_client.py:270: AssertionError
+------------------------------------ Captured stderr call ------------------------------------
+INFO     [client] Starting Dask client setup (workload_type=cpu | environment=script)
+INFO     [resources] Resources detected via SLURM (total_cores=8 | total_mem_gib=119.2)
+INFO     [client] Temp/spill dir: /var/folders/30/ng9_tlys2f1802_03ng09n0m0000gn/T/dask-55499
+INFO     [client] Workers: 1 | threads/worker: 1 | processes: True
+INFO     [client] Mem: total ~119.2 GiB | usable ~117.2 GiB | per-worker ~117.2 GiB
+INFO     [client] Compression: spill=auto | comm=False
+INFO     [client] Dask client ready
+------------------------------------- Captured log call --------------------------------------
+INFO     distributed.scheduler:scheduler.py:1766 State start
+INFO     distributed.scheduler:scheduler.py:4282   Scheduler at:     tcp://127.0.0.1:50320
+INFO     distributed.scheduler:scheduler.py:4297   dashboard at:  http://127.0.0.1:8787/status
+INFO     distributed.scheduler:scheduler.py:8182 Registering Worker plugin shuffle
+WARNING  distributed.nanny.memory:worker_memory.py:492 Ignoring provided memory limit 125852516352 due to system memory limit of 16.00 GiB
+INFO     distributed.nanny:nanny.py:368         Start Nanny at: 'tcp://127.0.0.1:50323'
+INFO     distributed.scheduler:scheduler.py:4635 Register worker addr: tcp://127.0.0.1:50325 name: 0
+INFO     distributed.scheduler:scheduler.py:6224 Starting worker compute stream, tcp://127.0.0.1:50325
+INFO     distributed.core:core.py:883 Starting established connection to tcp://127.0.0.1:50327
+INFO     distributed.scheduler:scheduler.py:5959 Receive client connection: Client-ae0cd1a0-2763-11f1-98cb-6e3b3455ff1d
+INFO     distributed.core:core.py:883 Starting established connection to tcp://127.0.0.1:50328
+INFO     distributed.scheduler:scheduler.py:6004 Remove client Client-ae0cd1a0-2763-11f1-98cb-6e3b3455ff1d
+INFO     distributed.core:core.py:908 Received 'close-stream' from tcp://127.0.0.1:50328; closing.
+INFO     distributed.scheduler:scheduler.py:6004 Remove client Client-ae0cd1a0-2763-11f1-98cb-6e3b3455ff1d
+INFO     distributed.scheduler:scheduler.py:5996 Close client connection: Client-ae0cd1a0-2763-11f1-98cb-6e3b3455ff1d
+INFO     distributed.scheduler:scheduler.py:7615 Retire worker addresses (stimulus_id='retire-workers-1774344450.0671082') (0,)
+INFO     distributed.nanny:nanny.py:611 Closing Nanny at 'tcp://127.0.0.1:50323'. Reason: nanny-close
+INFO     distributed.nanny:nanny.py:858 Nanny asking worker to close. Reason: nanny-close
+INFO     distributed.core:core.py:908 Received 'close-stream' from tcp://127.0.0.1:50327; closing.
+INFO     distributed.scheduler:scheduler.py:5445 Remove worker addr: tcp://127.0.0.1:50325 name: 0 (stimulus_id='handle-worker-cleanup-1774344450.069141')
+INFO     distributed.scheduler:scheduler.py:5583 Lost all workers
+INFO     distributed.nanny:nanny.py:626 Nanny at 'tcp://127.0.0.1:50323' closed.
+INFO     distributed.scheduler:scheduler.py:4344 Closing scheduler. Reason: unknown
+INFO     distributed.scheduler:scheduler.py:4372 Scheduler closing all comms
+_______________________ TestDecideTopology.test_invalid_workload_type ________________________
+
+self = <tests.test_topology.TestDecideTopology object at 0x10ec760c0>
+
+    @pytest.mark.unit
+    def test_invalid_workload_type(self):
+        """Test invalid workload type raises error."""
+        with pytest.raises(InvalidConfigurationError) as exc_info:
+            decide_topology("invalid", total_cores=8)
+    
+>       assert "workload_type must be 'cpu', 'io', or 'mixed'" in str(exc_info.value)
+E       assert "workload_type must be 'cpu', 'io', or 'mixed'" in "workload_type must be 'cpu', 'io', 'mixed', or 'gpu', got 'invalid'"
+E        +  where "workload_type must be 'cpu', 'io', 'mixed', or 'gpu', got 'invalid'" = str(InvalidConfigurationError("workload_type must be 'cpu', 'io', 'mixed', or 'gpu', got 'invalid'"))
+E        +    where InvalidConfigurationError("workload_type must be 'cpu', 'io', 'mixed', or 'gpu', got 'invalid'") = <ExceptionInfo InvalidConfigurationError("workload_type must be 'cpu', 'io', 'mixed', or 'gpu', got 'invalid'") tblen=2>.value
+
+tests/test_topology.py:146: AssertionError
+___________________ TestRecommendChunks.test_recommend_chunks_basic_usage ____________________
+
+self = <tests.test_xarray_chunks.TestRecommendChunks object at 0x10ecc6720>
+mock_dataset_2d = <Mock id='4978129808'>
+
+    def test_recommend_chunks_basic_usage(self, mock_dataset_2d):
+        """Test basic usage of recommend_chunks function."""
+        from dask_setup.xarray import recommend_chunks
+    
+        with (
+            patch("dask_setup.xarray._get_cluster_info") as mock_cluster_info,
+            patch("dask_setup.xarray._analyze_dataset") as mock_analyze,
+        ):
+            mock_cluster_info.return_value = {
+                "n_workers": 4,
+                "memory_limit_bytes": 2 * 1024**3,
+            }
+    
+            mock_analyze.return_value = {
+                "dims": {"y": 1000, "x": 2000},
+                "current_chunking": {},
+                "variables": {
+                    "temperature": {
+                        "dtype": "float32",
+                        "shape": (1000, 2000),
+                        "dims": ["y", "x"],
+                        "size_bytes": 8000000,
+                    }
+                },
+                "is_currently_chunked": False,
+            }
+    
+            chunks = recommend_chunks(mock_dataset_2d)
+    
+>           assert isinstance(chunks, dict)
+E           assert False
+E            +  where False = isinstance(ChunkRecommendation(chunks={}, estimated_chunk_mb=7.6, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:544: AssertionError
+___________________ TestRecommendChunks.test_recommend_chunks_with_client ____________________
+
+self = <tests.test_xarray_chunks.TestRecommendChunks object at 0x10ecc6a80>
+mock_dataset_2d = <Mock id='4978274528'>
+
+    def test_recommend_chunks_with_client(self, mock_dataset_2d):
+        """Test recommend_chunks with a Dask client."""
+        from dask_setup.xarray import recommend_chunks
+    
+        mock_client = Mock()
+    
+        with (
+            patch("dask_setup.xarray._get_cluster_info") as mock_cluster_info,
+            patch("dask_setup.xarray._analyze_dataset") as mock_analyze,
+        ):
+            mock_cluster_info.return_value = {
+                "n_workers": 4,
+                "memory_limit_bytes": 8 * 1024**3,
+            }
+    
+            mock_analyze.return_value = {
+                "dims": {"time": 365, "y": 100, "x": 200},
+                "current_chunking": {},
+                "variables": {
+                    "temp": {
+                        "dtype": "float64",
+                        "shape": (365, 100, 200),
+                        "dims": ["time", "y", "x"],
+                        "size_bytes": 58400000,
+                    }
+                },
+                "is_currently_chunked": False,
+            }
+    
+            chunks = recommend_chunks(mock_dataset_2d, client=mock_client)
+    
+>           assert isinstance(chunks, dict)
+E           assert False
+E            +  where False = isinstance(ChunkRecommendation(chunks={}, estimated_chunk_mb=27.8, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:613: AssertionError
+__________________ TestRecommendChunks.test_recommend_chunks_workload_types __________________
+
+self = <tests.test_xarray_chunks.TestRecommendChunks object at 0x10ecc6c30>
+mock_dataset_3d = <Mock id='4604553376'>
+
+    def test_recommend_chunks_workload_types(self, mock_dataset_3d):
+        """Test different workload types produce different chunking strategies."""
+        from dask_setup.xarray import recommend_chunks
+    
+        with (
+            patch("dask_setup.xarray._get_cluster_info") as mock_cluster_info,
+            patch("dask_setup.xarray._analyze_dataset") as mock_analyze,
+        ):
+            mock_cluster_info.return_value = {
+                "n_workers": 4,
+                "memory_limit_bytes": 4 * 1024**3,
+            }
+    
+            mock_analyze.return_value = {
+                "dims": {"time": 365, "y": 200, "x": 300},
+                "current_chunking": {},
+                "variables": {
+                    "data": {
+                        "dtype": "float32",
+                        "shape": (365, 200, 300),
+                        "dims": ["time", "y", "x"],
+                        "size_bytes": 87600000,
+                    }
+                },
+                "is_currently_chunked": False,
+            }
+    
+            chunks_cpu = recommend_chunks(mock_dataset_3d, workload_type="cpu")
+            chunks_io = recommend_chunks(mock_dataset_3d, workload_type="io")
+            chunks_mixed = recommend_chunks(mock_dataset_3d, workload_type="mixed")
+    
+            # Different workload types should potentially give different results
+>           assert isinstance(chunks_cpu, dict)
+E           assert False
+E            +  where False = isinstance(ChunkRecommendation(chunks={}, estimated_chunk_mb=83.5, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:648: AssertionError
+______________________________ TestEdgeCases.test_tiny_dataset _______________________________
+
+self = <tests.test_xarray_chunks.TestEdgeCases object at 0x10ecc7080>
+
+    def test_tiny_dataset(self):
+        """Test chunking recommendations for very small datasets."""
+        from dask_setup.xarray import recommend_chunks
+    
+        mock_tiny_ds = Mock()
+        mock_tiny_ds.name = "small"
+        mock_tiny_ds.dims = ("x", "y")
+        mock_tiny_ds.shape = (10, 20)
+        mock_tiny_ds.dtype = "float32"
+    
+        with (
+            patch("dask_setup.xarray._get_cluster_info") as mock_cluster_info,
+            patch("dask_setup.xarray._analyze_dataset") as mock_analyze,
+        ):
+            mock_cluster_info.return_value = {
+                "n_workers": 4,
+                "memory_limit_bytes": 8 * 1024**3,
+            }
+    
+            mock_analyze.return_value = {
+                "dims": {"x": 10, "y": 20},
+                "current_chunking": {},
+                "variables": {
+                    "small": {
+                        "dtype": "float32",
+                        "shape": (10, 20),
+                        "dims": ["x", "y"],
+                        "size_bytes": 800,  # Very small
+                    }
+                },
+                "is_currently_chunked": False,
+            }
+    
+            chunks = recommend_chunks(mock_tiny_ds)
+    
+            # Should likely recommend no chunking for tiny dataset
+>           assert isinstance(chunks, dict)
+E           assert False
+E            +  where False = isinstance(ChunkRecommendation(chunks={}, estimated_chunk_mb=0.0, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:736: AssertionError
+________________________ TestEdgeCases.test_single_dimension_dataset _________________________
+
+self = <tests.test_xarray_chunks.TestEdgeCases object at 0x10ecc7200>
+
+    def test_single_dimension_dataset(self):
+        """Test chunking for 1D datasets."""
+        from dask_setup.xarray import recommend_chunks
+    
+        mock_1d_ds = Mock()
+        mock_1d_ds.name = "timeseries"
+        mock_1d_ds.dims = ("time",)
+        mock_1d_ds.shape = (100000,)
+        mock_1d_ds.dtype = "float64"
+    
+        with (
+            patch("dask_setup.xarray._get_cluster_info") as mock_cluster_info,
+            patch("dask_setup.xarray._analyze_dataset") as mock_analyze,
+        ):
+            mock_cluster_info.return_value = {
+                "n_workers": 2,
+                "memory_limit_bytes": 2 * 1024**3,
+            }
+    
+            mock_analyze.return_value = {
+                "dims": {"time": 100000},
+                "current_chunking": {},
+                "variables": {
+                    "timeseries": {
+                        "dtype": "float64",
+                        "shape": (100000,),
+                        "dims": ["time"],
+                        "size_bytes": 800000,
+                    }
+                },
+                "is_currently_chunked": False,
+            }
+    
+            chunks = recommend_chunks(mock_1d_ds)
+    
+>           assert isinstance(chunks, dict)
+E           assert False
+E            +  where False = isinstance(ChunkRecommendation(chunks={}, estimated_chunk_mb=0.8, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:773: AssertionError
+____________________ TestIntegrationScenarios.test_climate_data_scenario _____________________
+
+self = <tests.test_xarray_chunks.TestIntegrationScenarios object at 0x10ecc73e0>
+
+    def test_climate_data_scenario(self):
+        """Test chunking recommendations for typical climate dataset."""
+        from dask_setup.xarray import recommend_chunks
+    
+        # Simulate typical climate dataset: daily data for global grid
+        mock_climate_ds = Mock()
+        mock_climate_ds.name = "temperature"
+        mock_climate_ds.dims = ("time", "lat", "lon")
+        mock_climate_ds.shape = (365, 721, 1440)  # Daily global 0.25° grid
+        mock_climate_ds.dtype = "float32"
+    
+        with (
+            patch("dask_setup.xarray._get_cluster_info") as mock_cluster_info,
+            patch("dask_setup.xarray._analyze_dataset") as mock_analyze,
+        ):
+            # Simulate HPC cluster
+            mock_cluster_info.return_value = {
+                "n_workers": 48,
+                "memory_limit_bytes": 6 * 1024**3,  # 6GB per worker
+            }
+    
+            mock_analyze.return_value = {
+                "dims": {"time": 365, "lat": 721, "lon": 1440},
+                "current_chunking": {},
+                "variables": {
+                    "temperature": {
+                        "dtype": "float32",
+                        "shape": (365, 721, 1440),
+                        "dims": ["time", "lat", "lon"],
+                        "size_bytes": 1516406400,  # ~1.5 GB
+                    }
+                },
+                "is_currently_chunked": False,
+            }
+    
+            chunks = recommend_chunks(mock_climate_ds, workload_type="cpu")
+    
+>           assert isinstance(chunks, dict)
+E           AssertionError: assert False
+E            +  where False = isinstance(ChunkRecommendation(chunks={'lat': 360, 'lon': 720}, estimated_chunk_mb=360.9, total_chunks=6), dict)
+
+tests/test_xarray_chunks.py:817: AssertionError
+_______________________ TestIntegrationScenarios.test_zarr_io_scenario _______________________
+
+self = <tests.test_xarray_chunks.TestIntegrationScenarios object at 0x10ecc7560>
+
+    def test_zarr_io_scenario(self):
+        """Test chunking recommendations for Zarr I/O workload."""
+        from dask_setup.xarray import recommend_chunks
+    
+        mock_zarr_ds = Mock()
+        mock_zarr_ds.name = "ocean_data"
+        mock_zarr_ds.dims = ("time", "depth", "y", "x")
+        mock_zarr_ds.shape = (8760, 50, 2000, 3000)  # Hourly ocean data
+        mock_zarr_ds.dtype = "float32"
+    
+        with (
+            patch("dask_setup.xarray._get_cluster_info") as mock_cluster_info,
+            patch("dask_setup.xarray._analyze_dataset") as mock_analyze,
+        ):
+            mock_cluster_info.return_value = {
+                "n_workers": 4,
+                "memory_limit_bytes": 16 * 1024**3,  # 16GB per worker
+            }
+    
+            mock_analyze.return_value = {
+                "dims": {"time": 8760, "depth": 50, "y": 2000, "x": 3000},
+                "current_chunking": {},
+                "variables": {
+                    "ocean_data": {
+                        "dtype": "float32",
+                        "shape": (8760, 50, 2000, 3000),
+                        "dims": ["time", "depth", "y", "x"],
+                        "size_bytes": 105120000000,  # ~100 GB
+                    }
+                },
+                "is_currently_chunked": False,
+            }
+    
+            chunks = recommend_chunks(mock_zarr_ds, workload_type="io")
+    
+>           assert isinstance(chunks, dict)
+E           AssertionError: assert False
+E            +  where False = isinstance(ChunkRecommendation(chunks={'time': 1}, estimated_chunk_mb=1144.4, total_chunks=8760), dict)
+
+tests/test_xarray_chunks.py:855: AssertionError
+_______________ TestRealXarrayIntegration.test_recommend_chunks_real_dataarray _______________
+
+self = <tests.test_xarray_chunks.TestRealXarrayIntegration object at 0x10ecc7710>
+
+    def test_recommend_chunks_real_dataarray(self):
+        """Test with actual xarray DataArray."""
+        from dask_setup.xarray import recommend_chunks
+    
+        # Create a real DataArray
+        rng = np.random.default_rng(seed=42)
+        data = rng.random((100, 200, 300)).astype(np.float32)
+        coords = {
+            "time": range(100),
+            "y": range(200),
+            "x": range(300),
+        }
+        da = xr.DataArray(data, coords=coords, dims=["time", "y", "x"])
+    
+        chunks = recommend_chunks(da)
+    
+>       assert isinstance(chunks, dict)
+E       assert False
+E        +  where False = isinstance(ChunkRecommendation(chunks={}, estimated_chunk_mb=22.9, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:889: AssertionError
+________________ TestRealXarrayIntegration.test_recommend_chunks_real_dataset ________________
+
+self = <tests.test_xarray_chunks.TestRealXarrayIntegration object at 0x10ecc7890>
+
+    def test_recommend_chunks_real_dataset(self):
+        """Test with actual xarray Dataset."""
+        from dask_setup.xarray import recommend_chunks
+    
+        # Create a real Dataset
+        rng = np.random.default_rng(seed=42)
+        data1 = rng.random((50, 100, 150)).astype(np.float32)
+        data2 = rng.random((50, 100, 150)).astype(np.float64)
+    
+        ds = xr.Dataset(
+            {
+                "temperature": (["time", "y", "x"], data1),
+                "pressure": (["time", "y", "x"], data2),
+            }
+        )
+    
+        chunks = recommend_chunks(ds, verbose=False)
+    
+>       assert isinstance(chunks, dict)
+E       assert False
+E        +  where False = isinstance(ChunkRecommendation(chunks={}, estimated_chunk_mb=5.7, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:910: AssertionError
+______________ TestRealXarrayIntegration.test_recommend_chunks_already_chunked _______________
+
+self = <tests.test_xarray_chunks.TestRealXarrayIntegration object at 0x10ecc7a10>
+
+    def test_recommend_chunks_already_chunked(self):
+        """Test with already chunked xarray object."""
+        from dask_setup.xarray import recommend_chunks
+    
+        # Create chunked DataArray
+        rng = np.random.default_rng(seed=42)
+        data = rng.random((200, 300, 400)).astype(np.float32)
+        da = xr.DataArray(data, dims=["time", "y", "x"])
+        da_chunked = da.chunk({"time": 50, "y": 150, "x": 200})
+    
+        chunks = recommend_chunks(da_chunked)
+    
+>       assert isinstance(chunks, dict)
+E       assert False
+E        +  where False = isinstance(ChunkRecommendation(chunks={}, estimated_chunk_mb=91.6, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:925: AssertionError
+_____________________ TestChunkDomain.test_spatial_domain_locks_temporal _____________________
+
+self = <tests.test_xarray_chunks.TestChunkDomain object at 0x10ecc66c0>
+dataset_info_3d = {'coords': {}, 'current_chunking': {}, 'dims': {'lat': 90, 'lon': 180, 'time': 365}, 'is_currently_chunked': False, ...}
+cluster_info = {'memory_limit_bytes': 8589934592, 'n_workers': 4, 'threads_per_worker': 4, 'total_memory_bytes': 34359738368}
+
+    def test_spatial_domain_locks_temporal(self, dataset_info_3d, cluster_info):
+        """chunk_domain='spatial' → time dim gets -1, lat/lon are chunked."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+    
+        with patch("dask_setup.xarray.np") as mock_np:
+            mock_np.dtype.return_value.itemsize = 4
+    
+            result = _calculate_optimal_chunks(
+                dataset_info=dataset_info_3d,
+                cluster_info=cluster_info,
+                workload_type="cpu",
+                chunk_domain="spatial",
+            )
+    
+        assert result.chunks.get("time") == -1, "time should be locked to -1"
+        # At least one spatial dim should be chunked (or -1 won't appear for them)
+>       assert "lat" in result.chunks or "lon" in result.chunks
+E       AssertionError: assert ('lat' in {'time': -1} or 'lon' in {'time': -1})
+E        +  where {'time': -1} = ChunkRecommendation(chunks={'time': -1}, estimated_chunk_mb=22.6, total_chunks=1).chunks
+E        +  and   {'time': -1} = ChunkRecommendation(chunks={'time': -1}, estimated_chunk_mb=22.6, total_chunks=1).chunks
+
+tests/test_xarray_chunks.py:1042: AssertionError
+_______________ TestRecommendChunksWithDomain.test_spatial_domain_integration ________________
+
+self = <tests.test_xarray_chunks.TestRecommendChunksWithDomain object at 0x10ecf8650>
+
+    def test_spatial_domain_integration(self):
+        """recommend_chunks(chunk_domain='spatial') locks time to -1."""
+        import numpy as np
+        import xarray as xr
+    
+        from dask_setup.xarray import recommend_chunks
+    
+        rng = np.random.default_rng(seed=0)
+        data = rng.random((100, 36, 72)).astype("float32")
+        ds = xr.Dataset(
+            {"temp": (["time", "lat", "lon"], data)},
+            coords={
+                "time": np.arange(100),
+                "lat": np.linspace(-90, 90, 36),
+                "lon": np.linspace(-180, 180, 72),
+            },
+        )
+    
+        chunks = recommend_chunks(ds, chunk_domain="spatial")
+    
+>       assert isinstance(chunks, dict)
+E       AssertionError: assert False
+E        +  where False = isinstance(ChunkRecommendation(chunks={'time': -1}, estimated_chunk_mb=1.0, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:1209: AssertionError
+_______________ TestRecommendChunksWithDomain.test_temporal_domain_integration _______________
+
+self = <tests.test_xarray_chunks.TestRecommendChunksWithDomain object at 0x10ecf87d0>
+
+    def test_temporal_domain_integration(self):
+        """recommend_chunks(chunk_domain='temporal') locks lat/lon to -1."""
+        import numpy as np
+        import xarray as xr
+    
+        from dask_setup.xarray import recommend_chunks
+    
+        rng = np.random.default_rng(seed=1)
+        data = rng.random((500, 36, 72)).astype("float32")
+        ds = xr.Dataset(
+            {"temp": (["time", "lat", "lon"], data)},
+            coords={
+                "time": np.arange(500),
+                "lat": np.linspace(-90, 90, 36),
+                "lon": np.linspace(-180, 180, 72),
+            },
+        )
+    
+        chunks = recommend_chunks(ds, chunk_domain="temporal")
+    
+>       assert isinstance(chunks, dict)
+E       AssertionError: assert False
+E        +  where False = isinstance(ChunkRecommendation(chunks={'lat': -1, 'lon': -1}, estimated_chunk_mb=4.9, total_chunks=1), dict)
+
+tests/test_xarray_chunks.py:1234: AssertionError
+_________________ TestValidateChunks.test_no_warnings_after_recommend_chunks _________________
+
+self = <tests.test_xarray_chunks.TestValidateChunks object at 0x10ecf8cb0>
+
+    @pytest.mark.unit
+    def test_no_warnings_after_recommend_chunks(self):
+        """Recommended chunks must not trigger OOM warnings in validate_chunks.
+    
+        Regression test for the bug where validate_chunks multiplied each
+        dimension's chunk size against the *full* extent of all other
+        dimensions, producing absurdly large estimates and false OOM warnings
+        for datasets that were already well-chunked.
+        """
+        import numpy as np
+        import xarray as xr
+    
+        from dask_setup.xarray import recommend_chunks, validate_chunks
+    
+        # 4-D dataset with ERA5-style dimension names (small enough to be fast)
+        data = np.zeros((24, 4, 18, 36), dtype="float32")
+        ds = xr.Dataset({"t": (["time", "level", "latitude", "longitude"], data)})
+    
+        chunks = recommend_chunks(ds)
+        ds_chunked = ds.chunk(chunks.chunks)
+    
+        # Must return no warnings — recommended chunks should be safe
+        warnings_list = validate_chunks(ds_chunked)
+>       assert warnings_list == [], (
+            "validate_chunks raised false OOM warnings after recommend_chunks:\n"
+            + "\n".join(warnings_list)
+        )
+E       AssertionError: validate_chunks raised false OOM warnings after recommend_chunks:
+E         Dimension 'time': chunk is only 0.24 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+E         Dimension 'level': chunk is only 0.24 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+E         Dimension 'latitude': chunk is only 0.24 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+E         Dimension 'longitude': chunk is only 0.24 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+E       assert ["Dimension '...rger chunks."] == []
+E         
+E         Left contains 4 more items, first extra item: "Dimension 'time': chunk is only 0.24 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks."
+E         Use -v to get more diff
+
+tests/test_xarray_chunks.py:1302: AssertionError
+_________________ TestValidateChunks.test_chunk_size_uses_chunk_not_full_dim _________________
+
+self = <tests.test_xarray_chunks.TestValidateChunks object at 0x10ecf8e30>
+
+    @pytest.mark.unit
+    def test_chunk_size_uses_chunk_not_full_dim(self):
+        """validate_chunks must compute chunk footprint from chunk sizes, not full dim sizes."""
+        import numpy as np
+        import xarray as xr
+    
+        from dask_setup.xarray import validate_chunks
+    
+        # The array itself is tiny; the key property being tested is that
+        # validate_chunks uses chunk sizes (not full dim extents) in its estimate.
+        data = np.zeros((20, 8, 15, 10), dtype="float32")
+        ds = xr.Dataset({"v": (["time", "lev", "lat", "lon"], data)})
+    
+        # Very small chunks — 1 element per dim → single chunk = 4 bytes
+        ds_chunked = ds.chunk({"time": 1, "lev": 1, "lat": 1, "lon": 1})
+    
+        # With correct estimation, no dimension should warn (chunks are tiny)
+        warnings_list = validate_chunks(ds_chunked)
+>       assert warnings_list == [], (
+            "Single-element chunks should never trigger OOM warnings, got:\n"
+            + "\n".join(warnings_list)
+        )
+E       AssertionError: Single-element chunks should never trigger OOM warnings, got:
+E         Dimension 'time': chunk is only 0.00 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+E         Dimension 'lev': chunk is only 0.00 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+E         Dimension 'lat': chunk is only 0.00 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+E         Dimension 'lon': chunk is only 0.00 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+E       assert ["Dimension '...rger chunks."] == []
+E         
+E         Left contains 4 more items, first extra item: "Dimension 'time': chunk is only 0.00 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks."
+E         Use -v to get more diff
+
+tests/test_xarray_chunks.py:1325: AssertionError
+______________ TestValidateChunks.test_unchunked_dims_fall_back_to_full_extent _______________
+
+self = <tests.test_xarray_chunks.TestValidateChunks object at 0x10ecf9130>
+
+    @pytest.mark.unit
+    def test_unchunked_dims_fall_back_to_full_extent(self):
+        """For dims without a chunk spec, validate_chunks should use the full dim length."""
+        from unittest.mock import patch
+    
+        import numpy as np
+        import xarray as xr
+    
+        from dask_setup.xarray import validate_chunks
+    
+        data = np.zeros((100, 200), dtype="float32")
+        ds = xr.Dataset({"v": (["x", "y"], data)})
+        # Chunk only x; y is un-chunked (full extent of 200)
+        ds_chunked = ds.chunk({"x": 10})
+    
+        # With generous worker memory, should be no warnings
+        big_worker_bytes = 16 * 1024**3  # 16 GiB
+        with patch(
+            "dask_setup.xarray._get_cluster_info",
+            return_value={
+                "n_workers": 1,
+                "memory_limit_bytes": big_worker_bytes,
+                "total_memory_bytes": big_worker_bytes,
+                "threads_per_worker": 1,
+            },
+        ):
+            warnings_list = validate_chunks(ds_chunked)
+    
+>       assert warnings_list == []
+E       assert ["Dimension '...rger chunks."] == []
+E         
+E         Left contains 2 more items, first extra item: "Dimension 'x': chunk is only 0.01 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks."
+E         Use -v to get more diff
+
+tests/test_xarray_chunks.py:1389: AssertionError
+====================================== warnings summary ======================================
+tests/test_compression.py::TestCompressionConfiguration::test_invalid_compression_algorithm
+  <frozen importlib._bootstrap>:488: RuntimeWarning: numpy.ndarray size changed, may indicate binary incompatibility. Expected 16 from C header, got 96 from PyObject
+
+tests/test_xarray_chunks.py::TestRealXarrayIntegration::test_recommend_chunks_already_chunked
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:923: UserWarning: Dimension 'time' has very small chunks (5.7 MiB). This may create high task overhead.
+    chunks = recommend_chunks(da_chunked)
+
+tests/test_xarray_chunks.py::TestRealXarrayIntegration::test_recommend_chunks_already_chunked
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:923: UserWarning: Dimension 'y' has very small chunks (5.7 MiB). This may create high task overhead.
+    chunks = recommend_chunks(da_chunked)
+
+tests/test_xarray_chunks.py::TestRealXarrayIntegration::test_recommend_chunks_already_chunked
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:923: UserWarning: Dimension 'x' has very small chunks (5.7 MiB). This may create high task overhead.
+    chunks = recommend_chunks(da_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_no_warnings_after_recommend_chunks
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1301: UserWarning: Dimension 'time': chunk is only 0.24 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_no_warnings_after_recommend_chunks
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1301: UserWarning: Dimension 'level': chunk is only 0.24 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_no_warnings_after_recommend_chunks
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1301: UserWarning: Dimension 'latitude': chunk is only 0.24 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_no_warnings_after_recommend_chunks
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1301: UserWarning: Dimension 'longitude': chunk is only 0.24 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_chunk_size_uses_chunk_not_full_dim
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1324: UserWarning: Dimension 'time': chunk is only 0.00 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_chunk_size_uses_chunk_not_full_dim
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1324: UserWarning: Dimension 'lev': chunk is only 0.00 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_chunk_size_uses_chunk_not_full_dim
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1324: UserWarning: Dimension 'lat': chunk is only 0.00 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_chunk_size_uses_chunk_not_full_dim
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1324: UserWarning: Dimension 'lon': chunk is only 0.00 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_genuinely_large_chunks_still_warn
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1357: UserWarning: Dimension 'x': chunk is 0 MiB, which exceeds 50% of per-worker memory (0.0 GiB). OOM risk — consider calling recommend_chunks() and rechunking.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_genuinely_large_chunks_still_warn
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1357: UserWarning: Dimension 'y': chunk is 0 MiB, which exceeds 50% of per-worker memory (0.0 GiB). OOM risk — consider calling recommend_chunks() and rechunking.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_unchunked_dims_fall_back_to_full_extent
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1387: UserWarning: Dimension 'x': chunk is only 0.01 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+tests/test_xarray_chunks.py::TestValidateChunks::test_unchunked_dims_fall_back_to_full_extent
+  /Users/green/GitHub/dask_setup/tests/test_xarray_chunks.py:1387: UserWarning: Dimension 'y': chunk is only 0.01 MiB (below 10 MiB minimum). High task-graph overhead likely — consider larger chunks.
+    warnings_list = validate_chunks(ds_chunked)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+--------- coverage: platform darwin, python 3.12.11-final-0 ----------
+Name                                Stmts   Miss Branch BrPart  Cover   Missing
+-------------------------------------------------------------------------------
+src/dask_setup/__init__.py            114     83      0      0    27%   47-95, 106-123, 134-138, 156-196, 204-217, 238-278
+src/dask_setup/benchmark.py           417    285    120      1    31%   250-273, 285-312, 341, 345, 348, 351-362, 369-388, 407-434, 470-521, 607-665, 722-809, 864-936, 947, 1059-1151
+src/dask_setup/callbacks.py            37     31      6      0    14%   89-158
+src/dask_setup/cli.py                 316     54     90      3    83%   52, 55, 289-332, 337-355, 362-364, 381-383, 408-410, 421-423, 677
+src/dask_setup/client.py              203     88     68     13    58%   49-55, 136, 188-193, 196-203, 212-232, 449->453, 454-460, 463-478, 486-493, 530, 537, 544-546, 590, 625-631, 661-679, 686-708, 714
+src/dask_setup/cluster.py              33      0      6      0   100%
+src/dask_setup/config.py              152      6     64      7    94%   108->exit, 187, 190, 195, 205, 213, 424
+src/dask_setup/config_manager.py      221     82     70      6    59%   58, 179-184, 220-223, 270-274, 328->331, 350-359, 364-391, 414-415, 454-499, 513-515, 549-590
+src/dask_setup/dashboard.py            37     11     10      1    70%   76-95, 115-121
+src/dask_setup/environment.py          21      7      6      0    59%   30-38
+src/dask_setup/error_handling.py      231     12     98     15    92%   80->85, 198, 267->277, 323->327, 360->362, 363, 389, 397->421, 407, 422, 452, 474-476, 510, 529, 568, 575
+src/dask_setup/exceptions.py           16      0      2      0   100%
+src/dask_setup/io_patterns.py         529    223    282     53    54%   23-29, 37-38, 42-43, 92, 102, 109, 116, 133, 142, 144, 173, 180, 205-212, 243, 268, 275-284, 298->311, 304-307, 338, 341, 350, 389, 402->408, 406->402, 409-411, 417-421, 432-433, 447-483, 489-522, 528-557, 572-574, 588-589, 595-596, 621-634, 639, 648, 653, 668, 669->685, 676, 679-682, 688, 708, 717->720, 739, 743-747, 758-769, 772->778, 775, 778->784, 782, 794-812, 818, 824-834, 897, 909->914, 917, 923, 944, 948, 951-961, 967-968, 974, 977-979, 982-990, 1002, 1012, 1024-1051, 1094-1095, 1106->exit
+src/dask_setup/legacy.py               76     76     26      0     0%   11-191
+src/dask_setup/logging.py             117     42     44      7    58%   44-46, 62->67, 68, 96, 112-131, 159->163, 163->167, 203, 207, 211-225, 253-260, 276-296
+src/dask_setup/multinode.py           277     74     80     10    73%   234, 321-322, 338-341, 350-352, 357-360, 483-547, 594-651, 682-696, 764-770, 807-810, 815-816, 821, 840->849, 904, 965, 967
+src/dask_setup/parquet.py             116     92     44      0    15%   26-29, 86, 95-96, 147-246, 257-291, 296, 301-311, 316-334
+src/dask_setup/rechunk.py              79     67     22      0    12%   49-55, 60-68, 148-269
+src/dask_setup/reporting.py            73     52     24      0    22%   68-76, 81-83, 88, 101-117, 128, 184-237
+src/dask_setup/resources.py           167     16     80      6    90%   107-108, 124-125, 156-157, 166-168, 229, 236-238, 318, 378-386
+src/dask_setup/schema/__init__.py       9      0      0      0   100%
+src/dask_setup/tempdir.py              41      0     12      0   100%
+src/dask_setup/topology.py             70      3     32      3    94%   28->31, 34, 66, 182
+src/dask_setup/tune.py                 80     59     20      0    21%   79-81, 149-274
+src/dask_setup/types.py                16      0      0      0   100%
+src/dask_setup/workload.py             72     63     30      0     9%   164-270
+src/dask_setup/xarray.py              353     54    178     23    82%   20-23, 31-32, 36-37, 110-111, 163, 186->201, 188->187, 193->201, 196-199, 327, 376, 435, 451-466, 570->574, 688-723, 745->788, 754->753, 762, 765-768, 773, 846, 853, 868, 873-876, 891, 894-897, 912->866
+-------------------------------------------------------------------------------
+TOTAL                                3873   1480   1414    148    60%
+Coverage HTML written to dir htmlcov
+
+================================== short test summary info ===================================
+FAILED tests/test_benchmark.py::TestChunkImpactResult::test_optimal_result - TypeError: ChunkImpactResult.__init__() missing 1 required positional argument: 'recommen...
+FAILED tests/test_benchmark.py::TestChunkImpactResult::test_summary_contains_optimal - TypeError: ChunkImpactResult.__init__() missing 1 required positional argument: 'recommen...
+FAILED tests/test_benchmark.py::TestChunkImpactResult::test_results_length - TypeError: ChunkImpactResult.__init__() missing 1 required positional argument: 'recommen...
+FAILED tests/test_client.py::TestSetupDaskClient::test_setup_dask_client_silence_logs - AssertionError: assert False
+FAILED tests/test_client.py::TestSetupDaskClient::test_setup_dask_client_output_formatting - AssertionError: assert '[setup_dask_client]' in ''
+FAILED tests/test_client.py::TestClientIntegration::test_parameter_validation_coverage - assert None == 50.0
+FAILED tests/test_compression.py::TestSpillThreadsConfiguration::test_spill_threads_with_dask_config - AssertionError: assert None == 6
+FAILED tests/test_compression.py::TestSpillThreadsConfiguration::test_spill_threads_dask_integration[1-1] - AssertionError: assert None == 1
+FAILED tests/test_compression.py::TestSpillThreadsConfiguration::test_spill_threads_dask_integration[4-4] - AssertionError: assert None == 4
+FAILED tests/test_compression.py::TestSpillThreadsConfiguration::test_spill_threads_dask_integration[8-8] - AssertionError: assert None == 8
+FAILED tests/test_compression.py::TestSpillThreadsConfiguration::test_spill_threads_dask_integration[16-16] - AssertionError: assert None == 16
+FAILED tests/test_compression.py::TestSpillThreadsEndToEnd::test_spill_threads_end_to_end_integration - AssertionError: assert None == 8
+FAILED tests/test_multinode.py::TestDetectClusterMode::test_slurm_takes_priority_over_pbs - AssertionError: assert 'pbs' == 'slurm'
+FAILED tests/test_multinode.py::TestSetupDaskClientMode::test_setup_dask_client_dispatches_to_pbs - AttributeError: <module 'dask_setup.client' from '/Users/green/GitHub/dask_setup/src/dask...
+FAILED tests/test_multinode.py::TestSetupDaskClientMode::test_setup_dask_client_dispatches_to_slurm - AttributeError: <module 'dask_setup.client' from '/Users/green/GitHub/dask_setup/src/dask...
+FAILED tests/test_multinode.py::test_version_is_2 - AssertionError: assert False
+FAILED tests/test_multinode.py::TestSetupPBSClusterWait::test_wait_for_workers_called_by_default - AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/d...
+FAILED tests/test_multinode.py::TestSetupPBSClusterWait::test_wait_skipped_when_disabled - AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/d...
+FAILED tests/test_multinode.py::TestSetupPBSClusterWait::test_timeout_error_propagates - AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/d...
+FAILED tests/test_multinode.py::TestSetupSLURMClusterWait::test_wait_for_workers_called_by_default - AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/d...
+FAILED tests/test_multinode.py::TestSetupSLURMClusterWait::test_wait_skipped_when_disabled - AttributeError: <module 'dask_setup.multinode' from '/Users/green/GitHub/dask_setup/src/d...
+FAILED tests/test_multinode.py::TestDetectClusterModeInteractive::test_slurm_interactive_no_batch_flag - AssertionError: assert 'slurm' == 'interactive'
+FAILED tests/test_multinode.py::TestSetupDaskClientInteractiveDispatch::test_explicit_interactive_mode - AttributeError: <module 'dask_setup.client' from '/Users/green/GitHub/dask_setup/src/dask...
+FAILED tests/test_multinode.py::TestSetupDaskClientInteractiveDispatch::test_auto_mode_pbs_interactive_dispatches_correctly - AttributeError: <module 'dask_setup.client' from '/Users/green/GitHub/dask_setup/src/dask...
+FAILED tests/test_resources.py::TestEnhancedMemoryParsingFeatures::test_overflow_protection_with_logging - assert False
+FAILED tests/test_resources.py::TestMemoryValidationFeatures::test_validate_memory_value_small_warning - assert False
+FAILED tests/test_resources.py::TestMemoryValidationFeatures::test_validate_memory_value_large_warning - assert False
+FAILED tests/test_resources.py::TestParsePBSMemBytes::test_bare_integer_treated_as_bytes - assert 558446353793941504 == 532575944704
+FAILED tests/test_resources.py::TestParsePBSMemBytes::test_bare_integer_not_inflated_like_slurm - AssertionError: assert 558446353793941504 == 532575944704
+FAILED tests/test_resources.py::TestParsePBSMemBytes::test_small_byte_count_round_trips - AssertionError: assert 1073741824 == 1024
+FAILED tests/test_resources.py::TestParsePBSMemBytes::test_detect_pbs_resources_uses_pbs_parser - AssertionError: assert 558446353793941504 == 532575944704
+FAILED tests/test_setup_dask_client.py::test_dashboard_disabled - AssertionError: assert 'setup_dask_client' in ''
+FAILED tests/test_topology.py::TestDecideTopology::test_invalid_workload_type - assert "workload_type must be 'cpu', 'io', or 'mixed'" in "workload_type must be 'cpu', '...
+FAILED tests/test_xarray_chunks.py::TestRecommendChunks::test_recommend_chunks_basic_usage - assert False
+FAILED tests/test_xarray_chunks.py::TestRecommendChunks::test_recommend_chunks_with_client - assert False
+FAILED tests/test_xarray_chunks.py::TestRecommendChunks::test_recommend_chunks_workload_types - assert False
+FAILED tests/test_xarray_chunks.py::TestEdgeCases::test_tiny_dataset - assert False
+FAILED tests/test_xarray_chunks.py::TestEdgeCases::test_single_dimension_dataset - assert False
+FAILED tests/test_xarray_chunks.py::TestIntegrationScenarios::test_climate_data_scenario - AssertionError: assert False
+FAILED tests/test_xarray_chunks.py::TestIntegrationScenarios::test_zarr_io_scenario - AssertionError: assert False
+FAILED tests/test_xarray_chunks.py::TestRealXarrayIntegration::test_recommend_chunks_real_dataarray - assert False
+FAILED tests/test_xarray_chunks.py::TestRealXarrayIntegration::test_recommend_chunks_real_dataset - assert False
+FAILED tests/test_xarray_chunks.py::TestRealXarrayIntegration::test_recommend_chunks_already_chunked - assert False
+FAILED tests/test_xarray_chunks.py::TestChunkDomain::test_spatial_domain_locks_temporal - AssertionError: assert ('lat' in {'time': -1} or 'lon' in {'time': -1})
+FAILED tests/test_xarray_chunks.py::TestRecommendChunksWithDomain::test_spatial_domain_integration - AssertionError: assert False
+FAILED tests/test_xarray_chunks.py::TestRecommendChunksWithDomain::test_temporal_domain_integration - AssertionError: assert False
+FAILED tests/test_xarray_chunks.py::TestValidateChunks::test_no_warnings_after_recommend_chunks - AssertionError: validate_chunks raised false OOM warnings after recommend_chunks:
+FAILED tests/test_xarray_chunks.py::TestValidateChunks::test_chunk_size_uses_chunk_not_full_dim - AssertionError: Single-element chunks should never trigger OOM warnings, got:
+FAILED tests/test_xarray_chunks.py::TestValidateChunks::test_unchunked_dims_fall_back_to_full_extent - assert ["Dimension '...rger chunks."] == []
+======================== 49 failed, 713 passed, 16 warnings in 23.08s ========================

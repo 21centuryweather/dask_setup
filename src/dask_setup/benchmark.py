@@ -46,10 +46,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .logging import get_logger
+
 if TYPE_CHECKING:
     from dask.distributed import Client
 
     from .config import DaskSetupConfig
+
+logger = get_logger("benchmark")
 
 __all__ = [
     "BenchmarkResult",
@@ -125,7 +129,10 @@ class BenchmarkResult:
     wall_time_std : float
         Standard deviation of per-repeat wall times (0.0 for a single repeat).
     peak_memory_gib : float
-        Maximum in-memory data across all workers at the end of the run.
+        Highest total worker process memory (RSS summed across workers)
+        observed *during* the timed runs, sampled every 0.2 s.  If in-flight
+        sampling was unavailable this falls back to a post-run reading and an
+        explanatory note is appended to ``errors``.
     spill_gib : float
         Total data written to disk spill storage during the run.
     n_tasks : int
@@ -461,6 +468,55 @@ class ChunkImpactResult:
 # ---------------------------------------------------------------------------
 
 
+@contextlib.contextmanager
+def _sample_peak_memory(client: Client) -> Any:
+    """Record peak cluster memory *while* the enclosed block runs.
+
+    Reading ``cluster_report(client).peak_memory_gib`` after ``.compute()``
+    returns does not measure a peak: by then the graph is done and the workers
+    have already released the data, so the figure is close to zero for exactly
+    the workloads whose memory use matters.
+
+    Yields a dict that is filled in on exit::
+
+        {"peak_gib": float, "sampled": bool}
+
+    ``sampled`` is ``False`` when no in-flight sampling was possible (older
+    ``distributed``, or a scheduler that refused the periodic callback), which
+    tells the caller to fall back to the post-run reading rather than report a
+    peak of 0.0.
+    """
+    result: dict[str, Any] = {"peak_gib": 0.0, "sampled": False}
+
+    label = "dask_setup_benchmark"
+    sampler = None
+    ctx = None
+    try:
+        from distributed.diagnostics import MemorySampler
+
+        sampler = MemorySampler()
+        # measure="process" is total RSS across workers -- the number that
+        # decides whether a job fits in its memory allocation.
+        ctx = sampler.sample(label, client=client, measure="process", interval=0.2)
+        ctx.__enter__()
+    except Exception as e:  # pragma: no cover - depends on distributed version
+        logger.debug("In-flight memory sampling unavailable", error=str(e))
+        ctx = None
+
+    try:
+        yield result
+    finally:
+        if ctx is not None:
+            try:
+                ctx.__exit__(None, None, None)
+                samples = (sampler.samples or {}).get(label) or []
+                peak_bytes = max((float(b) for _t, b in samples), default=0.0)
+                result["peak_gib"] = peak_bytes / (1024**3)
+                result["sampled"] = bool(samples)
+            except Exception as e:
+                logger.debug("Could not read memory samples", error=str(e))
+
+
 def _measure_one(
     ds: Any,
     operation_fn: Callable[[Any], Any],
@@ -507,23 +563,24 @@ def _measure_one(
     with contextlib.suppress(Exception):
         n_workers = len(client.scheduler_info().get("workers", {}))
 
-    # Optional warmup
+    # Optional warmup (not sampled -- it is not part of the measured run)
     if warmup:
         try:
             operation_fn(ds).compute()
         except Exception as e:
             errors.append(f"Warmup failed: {e}")
 
-    # Timed runs
-    for i in range(repeats):
-        t0 = time.monotonic()
-        try:
-            operation_fn(ds).compute()
-        except Exception as e:
-            errors.append(f"Run {i + 1}/{repeats} failed: {e}")
-            times.append(float("inf"))
-        else:
-            times.append(time.monotonic() - t0)
+    # Timed runs, with memory sampled while they are in flight
+    with _sample_peak_memory(client) as mem_samples:
+        for i in range(repeats):
+            t0 = time.monotonic()
+            try:
+                operation_fn(ds).compute()
+            except Exception as e:
+                errors.append(f"Run {i + 1}/{repeats} failed: {e}")
+                times.append(float("inf"))
+            else:
+                times.append(time.monotonic() - t0)
 
     # Filter infinities (failed runs)
     valid_times = [t for t in times if t != float("inf")]
@@ -535,8 +592,13 @@ def _measure_one(
         from .reporting import cluster_report
 
         report = cluster_report(client)
-        peak_mem = report.peak_memory_gib
         spill = report.total_spill_gib
+        # Prefer the in-flight peak; the post-run reading is a floor at best.
+        if mem_samples["sampled"]:
+            peak_mem = mem_samples["peak_gib"]
+        else:
+            peak_mem = report.peak_memory_gib
+            errors.append("Peak memory sampled after the run; treat it as a lower bound")
     except Exception as e:
         errors.append(f"Metrics collection failed: {e}")
 
@@ -756,7 +818,12 @@ def scaling_analysis(
     counts = list(worker_counts)
 
     if base_config is None:
-        base_config = DaskSetupConfig(fallback_on_detection_failure=True)
+        # workload_type="cpu" is the only default under which this sweep means
+        # anything: decide_topology() pins n_workers=1 for "io" (and for "gpu"
+        # with no GPU present) regardless of max_workers, so an "io" sweep
+        # builds the same single-worker cluster at every point and the
+        # "scaling curve" is just timing noise.
+        base_config = DaskSetupConfig(workload_type="cpu", fallback_on_detection_failure=True)
 
     # Use tqdm for progress if available (works in both terminals and Jupyter).
     # tqdm.auto automatically picks the right bar type (notebook vs terminal).
@@ -791,12 +858,9 @@ def scaling_analysis(
 
         try:
             client, cluster, _tmp = setup_dask_client(
-                # Pass per-run values as explicit kwargs so they are
-                # treated as intentional overrides by _resolve_configuration
-                # and cannot be shadowed by the config= default-detection logic.
-                workload_type=cfg.workload_type,
-                max_workers=nw,
-                reserve_mem_gb=cfg.reserve_mem_gb,
+                # cfg already carries max_workers=nw and adaptive=False; every
+                # field of a config= object is now honoured, so there is no
+                # need to re-pass them as explicit keyword arguments.
                 config=cfg,
                 fallback_on_detection_failure=fallback_on_detection_failure,
                 mode=mode,
@@ -835,15 +899,36 @@ def scaling_analysis(
     if not baseline_time or baseline_time != baseline_time:  # nan check
         baseline_time = 1.0
 
+    # Efficiency is speedup relative to the *ratio* of workers, not to the
+    # absolute worker count.  Dividing by nw made a sweep that starts anywhere
+    # other than 1 worker report a fraction of its true efficiency: a perfect
+    # (4, 8) sweep scored 0.25 at its own baseline.
+    actual_counts = [r.n_workers or nw for r, nw in zip(raw_results, counts, strict=False)]
+    baseline_workers = actual_counts[0] if actual_counts else 1
+
     speedups = []
     efficiencies = []
-    for r, nw in zip(raw_results, counts, strict=False):
+    for r, nw in zip(raw_results, actual_counts, strict=False):
         if r.wall_time_seconds and r.wall_time_seconds == r.wall_time_seconds:
             sp = baseline_time / r.wall_time_seconds
         else:
             sp = float("nan")
         speedups.append(sp)
-        efficiencies.append(sp / nw if nw > 0 else float("nan"))
+        worker_ratio = (nw / baseline_workers) if (nw > 0 and baseline_workers > 0) else 0.0
+        efficiencies.append(sp / worker_ratio if worker_ratio > 0 else float("nan"))
+
+    # A sweep in which the cluster never actually changed size produces a
+    # meaningless curve.  Say so rather than letting the caller read noise as
+    # a scaling result.
+    distinct = {n for n in actual_counts if n > 0}
+    if len(counts) > 1 and len(distinct) == 1:
+        logger.warning(
+            "Scaling sweep ran at a constant worker count; the curve is not a scaling result",
+            requested=counts,
+            actual=actual_counts[0] if actual_counts else 0,
+            workload_type=base_config.workload_type,
+            hint="workload_type='io'/'gpu' pin n_workers=1; use workload_type='cpu' or 'mixed'",
+        )
 
     scaling = ScalingResult(
         results=raw_results,
@@ -1206,19 +1291,24 @@ def run_synthetic_benchmark(
         if verbose:
             print(f"Cluster ready: {n_workers} workers. Running {operation!r} × {repeats} …")
 
-        for i in range(repeats):
-            t0 = time.monotonic()
-            try:
-                op_fn(arr).compute()
-            except Exception as e:
-                errors.append(f"Run {i + 1} failed: {e}")
-                times.append(float("inf"))
-            else:
-                times.append(time.monotonic() - t0)
+        with _sample_peak_memory(client) as mem_samples:
+            for i in range(repeats):
+                t0 = time.monotonic()
+                try:
+                    op_fn(arr).compute()
+                except Exception as e:
+                    errors.append(f"Run {i + 1} failed: {e}")
+                    times.append(float("inf"))
+                else:
+                    times.append(time.monotonic() - t0)
 
         report = cluster_report(client)
-        peak_mem = report.peak_memory_gib
         spill = report.total_spill_gib
+        if mem_samples["sampled"]:
+            peak_mem = mem_samples["peak_gib"]
+        else:
+            peak_mem = report.peak_memory_gib
+            errors.append("Peak memory sampled after the run; treat it as a lower bound")
 
     except Exception as e:
         errors.append(f"Cluster error: {e}")

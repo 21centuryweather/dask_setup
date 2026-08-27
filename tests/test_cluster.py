@@ -616,3 +616,105 @@ class TestClusterIntegration:
                 f"expected {expected_bytes} bytes per worker, "
                 f"got {memory_spec.mem_per_worker_bytes}"
             )
+
+
+class TestFitWorkersToMemory:
+    """Worker counts must fit the memory budget rather than over-committing it.
+
+    Regression guard: per-worker memory was floored at 1 GiB without lowering
+    the worker count. Since Dask's memory_limit is per-worker, N workers each
+    floored at 1 GiB commit N GiB in total — on a core-rich, memory-tight node
+    that exceeded the node's RAM and silently consumed the whole reservation.
+    """
+
+    @pytest.mark.unit
+    def test_reduces_workers_when_memory_is_tight(self):
+        from dask_setup.cluster import fit_workers_to_memory
+
+        # The reported scenario: 64 GiB node, 50 GiB reserved, 64 CPU workers
+        assert fit_workers_to_memory(usable_mem_gb=14.0, n_workers=64) == 14
+
+    @pytest.mark.unit
+    def test_leaves_healthy_configurations_alone(self):
+        from dask_setup.cluster import fit_workers_to_memory
+
+        # 196 GiB usable across 48 workers is ~4 GiB each — no reduction
+        assert fit_workers_to_memory(usable_mem_gb=196.0, n_workers=48) == 48
+
+    @pytest.mark.unit
+    def test_never_returns_zero_workers(self):
+        from dask_setup.cluster import fit_workers_to_memory
+
+        assert fit_workers_to_memory(usable_mem_gb=0.5, n_workers=8) == 1
+        assert fit_workers_to_memory(usable_mem_gb=4.0, n_workers=0) == 1
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("usable_gb", "requested"),
+        [(14.0, 64), (196.0, 48), (24.0, 8), (6.0, 16), (1.0, 1), (0.5, 4)],
+    )
+    def test_result_never_over_commits(self, usable_gb, requested):
+        """The invariant: fitted workers x minimum budget <= usable memory."""
+        from dask_setup.cluster import MIN_MEM_PER_WORKER_GB, fit_workers_to_memory
+
+        fitted = fit_workers_to_memory(usable_gb, requested)
+        assert 1 <= fitted <= max(1, requested)
+        if fitted > 1:
+            assert fitted * MIN_MEM_PER_WORKER_GB <= usable_gb
+
+
+class TestComputeUsableMemGb:
+    @pytest.mark.unit
+    def test_subtracts_the_reservation(self):
+        from dask_setup.cluster import compute_usable_mem_gb
+
+        assert compute_usable_mem_gb(64 * (1024**3), reserve_mem_gb=50.0) == pytest.approx(14.0)
+
+    @pytest.mark.unit
+    def test_applies_the_max_mem_cap(self):
+        from dask_setup.cluster import compute_usable_mem_gb
+
+        usable = compute_usable_mem_gb(256 * (1024**3), reserve_mem_gb=10.0, max_mem_gb=64.0)
+        assert usable == pytest.approx(54.0)
+
+    @pytest.mark.unit
+    def test_raises_when_the_reservation_leaves_nothing(self):
+        from dask_setup.cluster import compute_usable_mem_gb
+
+        with pytest.raises(ValueError, match="Not enough memory"):
+            compute_usable_mem_gb(32 * (1024**3), reserve_mem_gb=40.0)
+
+    @pytest.mark.unit
+    def test_agrees_with_calculate_memory_spec(self):
+        from dask_setup.cluster import calculate_memory_spec, compute_usable_mem_gb
+
+        total = 128 * (1024**3)
+        spec = calculate_memory_spec(total, n_workers=4, reserve_mem_gb=16.0)
+        assert compute_usable_mem_gb(total, reserve_mem_gb=16.0) == spec.usable_mem_gb
+
+
+class TestCalculateMemorySpecOverCommitWarning:
+    @pytest.mark.unit
+    def test_warns_when_the_floor_over_commits(self, caplog):
+        """Direct callers that skip fit_workers_to_memory must be told."""
+        import logging
+
+        from dask_setup.cluster import calculate_memory_spec
+
+        with caplog.at_level(logging.WARNING, logger="dask_setup.cluster"):
+            spec = calculate_memory_spec(8 * (1024**3), n_workers=16, reserve_mem_gb=2.0)
+
+        # Behaviour is unchanged for compatibility — but it is no longer silent
+        assert spec.mem_per_worker_bytes == int(1.0 * (1024**3))
+        assert any("over-commits" in r.message for r in caplog.records)
+
+    @pytest.mark.unit
+    def test_stays_quiet_when_the_budget_fits(self, caplog):
+        import logging
+
+        from dask_setup.cluster import calculate_memory_spec
+
+        with caplog.at_level(logging.WARNING, logger="dask_setup.cluster"):
+            calculate_memory_spec(128 * (1024**3), n_workers=8, reserve_mem_gb=16.0)
+
+        assert not [r for r in caplog.records if "over-commits" in r.message]

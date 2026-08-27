@@ -28,6 +28,7 @@ Example::
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -172,7 +173,11 @@ class MultiNodeConfig:
         visible to all workers (e.g. Rechunker targets).  When ``None``,
         per-node temp is used.
     env_extra:
-        Extra environment variable exports to include in worker job scripts.
+        Extra shell lines inserted verbatim near the top of worker job scripts,
+        before the worker starts -- e.g. ``["module load conda/analysis3",
+        "export OMP_NUM_THREADS=1"]``.  Write the full statement including any
+        ``export``; the lines are not modified.  This matches dask-jobqueue's
+        ``job_script_prologue``, which is where they end up.
     scheduler_options:
         Options forwarded verbatim to ``dask-jobqueue``'s
         ``scheduler_options`` parameter.
@@ -364,6 +369,50 @@ def _make_shared_tmpdir(cfg: MultiNodeConfig) -> SharedTempDir | None:
     return SharedTempDir(path=cfg.shared_tmp_dir)
 
 
+def _pbs_account_kwarg(project: str | None) -> dict[str, Any]:
+    """Return the account/project kwarg under the name this dask-jobqueue wants.
+
+    dask-jobqueue renamed PBS's ``project`` to ``account`` in 0.8 and warns on
+    every cluster construction when the old name is used.  SLURM has only ever
+    had ``account``.
+    """
+    if project is None:
+        return {}
+    try:
+        import inspect
+
+        from dask_jobqueue.pbs import PBSJob
+
+        if "account" in inspect.signature(PBSJob.__init__).parameters:
+            return {"account": project}
+    except Exception as e:  # pragma: no cover - defensive, older/odd installs
+        logger.debug("Could not introspect PBSJob for the account kwarg", error=str(e))
+    return {"project": project}
+
+
+def _jobqueue_prologue_kwarg(env_extra: list[str]) -> dict[str, Any]:
+    """Return the job-script prologue kwarg under the name this version wants.
+
+    dask-jobqueue renamed ``env_extra`` to ``job_script_prologue`` in 0.8 and
+    emits a deprecation warning on every cluster construction when the old name
+    is used.  Both names carry the same payload: shell lines inserted verbatim
+    into the worker job script.
+    """
+    if not env_extra:
+        return {}
+    lines = list(env_extra)
+    try:
+        import inspect
+
+        from dask_jobqueue.core import Job
+
+        if "job_script_prologue" in inspect.signature(Job.__init__).parameters:
+            return {"job_script_prologue": lines}
+    except Exception as e:  # pragma: no cover - defensive, older/odd installs
+        logger.debug("Could not introspect Job for the prologue kwarg", error=str(e))
+    return {"env_extra": lines}
+
+
 def _worker_extra_args(cfg: MultiNodeConfig) -> list[str]:
     """Build extra arguments forwarded to each dask-worker process."""
     args = []
@@ -515,24 +564,27 @@ def setup_pbs_cluster(
     shared_tmp = _make_shared_tmpdir(cfg)
     extra_worker_args = _worker_extra_args(cfg)
 
-    mem_str = f"{cfg.mem_per_worker_gb:.0f}GB"
-
+    # dask-jobqueue's `cores` and `memory` are PER JOB, not per worker: it
+    # derives threads-per-worker as cores // processes and the per-worker
+    # memory limit as memory / processes.  Pass the job totals so those
+    # divisions land on the per-worker figures the config asked for, and so
+    # they agree with the resource_spec the scheduler is given below.
     extra_directives = list(cfg.job_extra_directives)
 
     cluster = PBSCluster(
-        cores=cfg.cores_per_worker,
-        memory=mem_str,
+        cores=cfg.total_cores_per_job,
+        memory=f"{cfg.total_mem_gb_per_job:.0f}GB",
         processes=cfg.workers_per_node,
         walltime=cfg.walltime,
         queue=cfg.queue,
-        project=cfg.project,
+        **_pbs_account_kwarg(cfg.project),
         resource_spec=(
             f"ncpus={cfg.total_cores_per_job},"
             f"mem={cfg.total_mem_gb_per_job:.0f}GB"
             + (f",nodes={cfg.n_nodes}" if cfg.n_nodes > 1 else "")
         ),
         job_extra_directives=extra_directives,
-        env_extra=cfg.env_extra,
+        **_jobqueue_prologue_kwarg(cfg.env_extra),
         worker_extra_args=extra_worker_args,
         scheduler_options=cfg.scheduler_options,
     )
@@ -624,17 +676,17 @@ def setup_slurm_cluster(
     shared_tmp = _make_shared_tmpdir(cfg)
     extra_worker_args = _worker_extra_args(cfg)
 
-    mem_str = f"{cfg.mem_per_worker_gb:.0f}GB"
-
+    # `cores` and `memory` are per-job totals for dask-jobqueue, which divides
+    # both by `processes` to size each worker — see setup_pbs_cluster.
     cluster = SLURMCluster(
-        cores=cfg.cores_per_worker,
-        memory=mem_str,
+        cores=cfg.total_cores_per_job,
+        memory=f"{cfg.total_mem_gb_per_job:.0f}GB",
         processes=cfg.workers_per_node,
         walltime=cfg.walltime,
         queue=cfg.queue,
         account=cfg.project,
         job_extra_directives=list(cfg.job_extra_directives),
-        env_extra=cfg.env_extra,
+        **_jobqueue_prologue_kwarg(cfg.env_extra),
         worker_extra_args=extra_worker_args,
         scheduler_options=cfg.scheduler_options,
     )
@@ -711,6 +763,7 @@ def setup_interactive_cluster(
     wait_for_workers: bool = True,
     worker_timeout: float = 60.0,
     scheduler_port: int = 8786,
+    config: Any = None,  # DaskSetupConfig | None
 ) -> tuple[Any, Any, str | None]:
     """Set up a Dask cluster using resources already allocated in an interactive job.
 
@@ -788,9 +841,16 @@ def setup_interactive_cluster(
         # Delegate to setup_dask_client with mode="local" so all resource
         # detection, topology, memory-spec, and cluster-creation logic is
         # handled in one place with the correct calling conventions.
+        # `config` carries the caller's resolved profile/config through, so
+        # settings like reserve_mem_gb are honoured here too.
         from .client import setup_dask_client
 
-        result = setup_dask_client(workload_type=workload_type, mode="local")
+        result = setup_dask_client(
+            workload_type=workload_type,
+            max_workers=workers_per_node,
+            config=config,
+            mode="local",
+        )
         # setup_dask_client returns a 3-tuple (client, cluster, tmp_path)
         # when ds is not provided.
         client, cluster, tmp_path = result[0], result[1], result[2]
@@ -889,9 +949,16 @@ def generate_pbs_script(
     project_line = f"#PBS -P {cfg.project}" if cfg.project else ""
     extra_lines = "\n".join(f"#PBS {d}" for d in cfg.job_extra_directives)
     mem_total = f"{cfg.total_mem_gb_per_job:.0f}GB"
-    env_lines = "\n".join(f"export {e}" for e in cfg.env_extra)
+    # Emitted verbatim, matching how dask-jobqueue treats these lines: they
+    # are shell statements ("module load conda", "export FOO=bar"), not bare
+    # assignments.  Prefixing "export" here turned "module load conda" into
+    # "export module load conda" on this path while the dask-jobqueue path
+    # ran it correctly -- the same list meant two different things.
+    env_lines = "\n".join(cfg.env_extra)
     shared_tmp_line = (
-        f"export DASK_SETUP_SHARED_TMP={cfg.shared_tmp_dir}" if cfg.shared_tmp_dir else ""
+        f"export DASK_SETUP_SHARED_TMP={shlex.quote(str(cfg.shared_tmp_dir))}"
+        if cfg.shared_tmp_dir
+        else ""
     )
 
     lines = [
@@ -915,7 +982,7 @@ def generate_pbs_script(
     lines += [
         "",
         "# --- Run ---",
-        f"{python_executable} {script_path} {dask_setup_args}".rstrip(),
+        f"{shlex.quote(python_executable)} {shlex.quote(script_path)} {dask_setup_args}".rstrip(),
     ]
     return "\n".join(lines) + "\n"
 
@@ -947,9 +1014,16 @@ def generate_slurm_script(
     account_line = f"#SBATCH --account={cfg.project}" if cfg.project else ""
     extra_lines = "\n".join(f"#SBATCH {d}" for d in cfg.job_extra_directives)
     mem_total = f"{cfg.total_mem_gb_per_job:.0f}G"
-    env_lines = "\n".join(f"export {e}" for e in cfg.env_extra)
+    # Emitted verbatim, matching how dask-jobqueue treats these lines: they
+    # are shell statements ("module load conda", "export FOO=bar"), not bare
+    # assignments.  Prefixing "export" here turned "module load conda" into
+    # "export module load conda" on this path while the dask-jobqueue path
+    # ran it correctly -- the same list meant two different things.
+    env_lines = "\n".join(cfg.env_extra)
     shared_tmp_line = (
-        f"export DASK_SETUP_SHARED_TMP={cfg.shared_tmp_dir}" if cfg.shared_tmp_dir else ""
+        f"export DASK_SETUP_SHARED_TMP={shlex.quote(str(cfg.shared_tmp_dir))}"
+        if cfg.shared_tmp_dir
+        else ""
     )
 
     lines = [
@@ -976,7 +1050,7 @@ def generate_slurm_script(
     lines += [
         "",
         "# --- Run ---",
-        f"{python_executable} {script_path} {dask_setup_args}".rstrip(),
+        f"{shlex.quote(python_executable)} {shlex.quote(script_path)} {dask_setup_args}".rstrip(),
     ]
     return "\n".join(lines) + "\n"
 
@@ -994,18 +1068,18 @@ def _apply_overrides(
 
     If *config* is ``None``, a new ``MultiNodeConfig`` is created from the
     keyword arguments (``None`` values are dropped so defaults apply).
+
+    Uses :func:`dataclasses.replace` rather than a ``to_dict()`` round-trip:
+    ``to_dict()`` is a JSON-facing view that omits ``env_extra`` and
+    ``scheduler_options``, so round-tripping through it silently dropped both
+    (taking any ``module load`` lines with them).
     """
     if config is None:
         clean = {k: v for k, v in kwargs.items() if v is not None}
         return MultiNodeConfig(**clean)
 
-    # Build an updated copy by replacing non-None kwargs
-    d = config.to_dict()
-    for k, v in kwargs.items():
-        if v is not None and k in d:
-            d[k] = v
-    # to_dict() serialises shared_tmp_dir as str|None; restore list fields
-    d.setdefault("job_extra_directives", [])
-    d.setdefault("env_extra", [])
-    d.setdefault("scheduler_options", {})
-    return MultiNodeConfig(**{k: v for k, v in d.items() if k != "VALID_WORKLOAD_TYPES"})
+    from dataclasses import fields, replace
+
+    settable = {f.name for f in fields(MultiNodeConfig) if f.init}
+    changes = {k: v for k, v in kwargs.items() if v is not None and k in settable}
+    return replace(config, **changes)

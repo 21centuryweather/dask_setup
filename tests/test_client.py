@@ -1,10 +1,15 @@
 """Unit tests for dask_setup.client module."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dask_setup.client import _resolve_configuration, setup_dask_client
+from dask_setup.client import (
+    _compute_smart_reserve_default,
+    _resolve_configuration,
+    setup_dask_client,
+)
 from dask_setup.config import ConfigProfile, DaskSetupConfig
 from dask_setup.exceptions import InsufficientResourcesError
 from dask_setup.types import MemorySpec, ResourceSpec, TopologySpec
@@ -23,7 +28,10 @@ class TestResolveConfiguration:
         # Should return default configuration
         assert config.workload_type == "io"
         assert config.max_workers is None
-        assert config.reserve_mem_gb == 50.0
+        # The reserve default scales with the machine (20% of RAM, clamped to
+        # [4, 50]); a flat 50.0 reserved more than the whole of a 16 GiB laptop.
+        assert config.reserve_mem_gb == _compute_smart_reserve_default()
+        assert 4.0 <= config.reserve_mem_gb <= 50.0
         assert config.max_mem_gb is None
         assert config.dashboard is True
         assert config.adaptive is False
@@ -108,29 +116,29 @@ class TestResolveConfiguration:
         profile_obj = ConfigProfile(name="base_profile", config=profile_config, builtin=True)
         mock_manager.get_profile.return_value = profile_obj
 
-        # Override some profile settings - test the actual function behavior
-        # The function creates an explicit config with non-default values only,
-        # then merges: defaults < profile < explicit
+        # Override some profile settings. Merge order is
+        # defaults < profile < explicit, and only parameters that were
+        # actually supplied count as explicit.
         config = _resolve_configuration(
             profile="base_profile",
-            workload_type="cpu",  # Override (differs from default "io")
-            max_workers=10,  # Override (differs from default None)
-            dashboard=False,  # Override (differs from default True)
-            adaptive=True,  # Explicit override (differs from default False)
+            workload_type="cpu",
+            max_workers=10,
+            dashboard=False,
+            adaptive=True,
         )
 
-        # Should use explicit overrides where they differ from function defaults
-        assert config.workload_type == "cpu"  # Explicit override (cpu != "io")
-        assert config.max_workers == 10  # Explicit override (10 != None)
-        assert config.dashboard is False  # Explicit override (False != True)
-        assert config.adaptive is True  # Explicit override (True != False)
+        # Supplied parameters win over the profile
+        assert config.workload_type == "cpu"
+        assert config.max_workers == 10
+        assert config.dashboard is False
+        assert config.adaptive is True
 
-        # For parameters where defaults are used (not overridden):
-        # - reserve_mem_gb: function gets default 50.0, which becomes default so is not explicit
-        #   but the merge is defaults < profile < explicit, so defaults win over profile
-        # - min_workers: function gets default None, profile has 1, so profile wins
-        assert config.reserve_mem_gb == 50.0  # Default wins (50.0 is the function default)
-        assert config.min_workers == 1  # From profile (None is default, 1 from profile)
+        # Parameters that were NOT supplied keep the profile's values rather
+        # than falling back to the library defaults. This is the regression
+        # guard for the merge bug where a throwaway DaskSetupConfig built from
+        # the explicit kwargs carried its own defaults over the profile.
+        assert config.reserve_mem_gb == 40.0  # from the profile, not the 50.0 default
+        assert config.min_workers == 1  # from the profile
 
     @pytest.mark.unit
     @patch("dask_setup.client.ConfigManager")
@@ -244,16 +252,19 @@ class TestSetupDaskClient:
         assert temp_dir == "/tmp/dask-temp"
 
         # Verify function calls
+        # Nothing was supplied, so every parameter forwards as the None
+        # sentinel — _resolve_configuration supplies the defaults.
         mock_resolve_config.assert_called_once_with(
             profile=None,
-            workload_type="io",
+            workload_type=None,
             max_workers=None,
-            reserve_mem_gb=50.0,
+            reserve_mem_gb=None,
             max_mem_gb=None,
-            dashboard=True,
-            adaptive=False,
+            dashboard=None,
+            adaptive=None,
             min_workers=None,
-            suggest_chunks=False,
+            suggest_chunks=None,
+            input_config=None,
         )
         mock_detect_resources.assert_called_once()
         mock_create_temp_dir.assert_called_once_with(base_dir=config.temp_base_dir)
@@ -274,6 +285,7 @@ class TestSetupDaskClient:
             memory_spec=self.test_memory_spec,
             temp_dir="/tmp/dask-temp",
             dashboard_address=":0",
+            silence_logs=logging.WARNING,
             adaptive=False,
             min_workers=None,
             memory_target=0.75,
@@ -340,16 +352,19 @@ class TestSetupDaskClient:
         )
 
         # Verify configuration resolution was called with profile
+        # Only max_workers was supplied; every other parameter forwards as
+        # None so the profile's values survive.
         mock_resolve_config.assert_called_once_with(
             profile="cpu_profile",
-            workload_type="io",
+            workload_type=None,
             max_workers=8,  # Explicit override
-            reserve_mem_gb=50.0,
+            reserve_mem_gb=None,
             max_mem_gb=None,
-            dashboard=True,
-            adaptive=False,
+            dashboard=None,
+            adaptive=None,
             min_workers=None,
-            suggest_chunks=False,
+            suggest_chunks=None,
+            input_config=None,
         )
 
         # Verify topology uses resolved config
@@ -407,6 +422,7 @@ class TestSetupDaskClient:
             memory_spec=self.test_memory_spec,
             temp_dir="/tmp/dask-temp",
             dashboard_address=":8787",  # Custom port
+            silence_logs=logging.WARNING,
             adaptive=False,
             min_workers=None,
             memory_target=0.75,
@@ -583,6 +599,7 @@ class TestSetupDaskClient:
             memory_spec=self.test_memory_spec,
             temp_dir="/tmp/dask-temp",
             dashboard_address=None,  # Dashboard disabled
+            silence_logs=logging.WARNING,
             adaptive=True,
             min_workers=2,
             memory_target=0.75,
@@ -645,6 +662,7 @@ class TestSetupDaskClient:
             memory_spec=self.test_memory_spec,
             temp_dir="/custom/temp/dask-xyz",
             dashboard_address=":0",
+            silence_logs=logging.WARNING,
             adaptive=False,
             min_workers=None,
             memory_target=0.75,
@@ -854,6 +872,7 @@ class TestClientIntegration:
             memory_spec=memory_spec,
             temp_dir="/scratch/dask-temp",
             dashboard_address=":0",  # Dashboard was overridden to True
+            silence_logs=logging.WARNING,
             adaptive=True,  # From profile (not overridden)
             min_workers=1,  # From profile (not overridden)
             memory_target=0.75,
@@ -922,12 +941,419 @@ class TestClientIntegration:
         # All expected parameters should be in the signature
         assert expected_params.issubset(param_names)
 
-        # Check parameter defaults match documentation
-        assert sig.parameters["workload_type"].default == "io"
-        assert sig.parameters["max_workers"].default is None
-        assert sig.parameters["reserve_mem_gb"].default == 50.0
-        assert sig.parameters["max_mem_gb"].default is None
-        assert sig.parameters["dashboard"].default is True
-        assert sig.parameters["adaptive"].default is False
-        assert sig.parameters["min_workers"].default is None
-        assert sig.parameters["profile"].default is None
+        # Every configuration parameter uses None as its "not supplied"
+        # sentinel. This is load-bearing: _resolve_configuration treats any
+        # non-None value as an explicit override, so a concrete default here
+        # would make that parameter permanently override the profile.
+        for name in expected_params:
+            assert sig.parameters[name].default is None, (
+                f"{name} must default to None so 'not supplied' is distinguishable "
+                f"from 'supplied with the default value'"
+            )
+
+        # The effective defaults — what you get when nothing is supplied — are
+        # the documented ones.
+        resolved = _resolve_configuration()
+        assert resolved.workload_type == "io"
+        assert resolved.max_workers is None
+        assert resolved.reserve_mem_gb == _compute_smart_reserve_default()
+        assert resolved.max_mem_gb is None
+        assert resolved.dashboard is True
+        assert resolved.adaptive is False
+        assert resolved.min_workers is None
+
+
+class TestConfigurationReachesTheCluster:
+    """End-to-end guards that a resolved configuration survives to cluster creation.
+
+    These deliberately do NOT mock ``_resolve_configuration`` — the merge chain
+    is the code under test. Everything downstream of it is mocked so no real
+    cluster is started.
+    """
+
+    @staticmethod
+    def _resources():
+        return ResourceSpec(total_cores=8, total_mem_bytes=256 * (1024**3), detection_method="test")
+
+    @staticmethod
+    def _memory_spec():
+        return MemorySpec(
+            total_mem_gib=256.0,
+            usable_mem_gb=196.0,
+            mem_per_worker_bytes=49 * (1024**3),
+            reserved_mem_gb=60.0,
+        )
+
+    @pytest.mark.unit
+    @patch("dask_setup.client.print_dashboard_info")
+    @patch("dask_setup.client.Client")
+    @patch("dask_setup.client.create_cluster")
+    @patch("dask_setup.client.calculate_memory_spec")
+    @patch("dask_setup.client.validate_topology")
+    @patch("dask_setup.client.decide_topology")
+    @patch("dask_setup.client.create_dask_temp_dir")
+    @patch("dask_setup.client.detect_resources")
+    @patch("builtins.print")
+    def test_builtin_profile_survives_to_topology_and_memory(
+        self,
+        mock_print,
+        mock_detect_resources,
+        mock_create_temp_dir,
+        mock_decide_topology,
+        mock_validate_topology,
+        mock_calculate_memory,
+        mock_create_cluster,
+        mock_client_class,
+        mock_print_dashboard,
+    ):
+        """profile='climate_analysis' must actually produce a cpu/60 GiB cluster.
+
+        Regression guard: the explicit-keyword layer used to be merged as a
+        fully-defaulted DaskSetupConfig, which reset every field the caller had
+        not named — so every profile silently resolved to the library defaults.
+        """
+        mock_detect_resources.return_value = self._resources()
+        mock_create_temp_dir.return_value = "/tmp/dask-temp"
+        mock_decide_topology.return_value = TopologySpec(
+            n_workers=8, threads_per_worker=1, processes=True, workload_type="cpu"
+        )
+        mock_calculate_memory.return_value = self._memory_spec()
+        mock_create_cluster.return_value = MagicMock()
+        mock_client_class.return_value = MagicMock()
+
+        setup_dask_client(profile="climate_analysis", dashboard=False)
+
+        # The profile's workload_type reaches topology selection
+        assert mock_decide_topology.call_args.kwargs["workload_type"] == "cpu"
+        # ...and its reserve_mem_gb reaches the memory calculation
+        assert mock_calculate_memory.call_args.kwargs["reserve_mem_gb"] == 60.0
+
+    @pytest.mark.unit
+    @patch("dask_setup.client.print_dashboard_info")
+    @patch("dask_setup.client.Client")
+    @patch("dask_setup.client.create_cluster")
+    @patch("dask_setup.client.calculate_memory_spec")
+    @patch("dask_setup.client.validate_topology")
+    @patch("dask_setup.client.decide_topology")
+    @patch("dask_setup.client.create_dask_temp_dir")
+    @patch("dask_setup.client.detect_resources")
+    @patch("builtins.print")
+    def test_config_object_survives_including_advanced_fields(
+        self,
+        mock_print,
+        mock_detect_resources,
+        mock_create_temp_dir,
+        mock_decide_topology,
+        mock_validate_topology,
+        mock_calculate_memory,
+        mock_create_cluster,
+        mock_client_class,
+        mock_print_dashboard,
+    ):
+        """config= must be honoured, including fields with no keyword equivalent."""
+        mock_detect_resources.return_value = self._resources()
+        mock_create_temp_dir.return_value = "/tmp/dask-temp"
+        mock_decide_topology.return_value = TopologySpec(
+            n_workers=4, threads_per_worker=1, processes=True, workload_type="cpu"
+        )
+        mock_calculate_memory.return_value = self._memory_spec()
+        mock_create_cluster.return_value = MagicMock()
+        mock_client_class.return_value = MagicMock()
+
+        cfg = DaskSetupConfig(
+            workload_type="cpu",
+            reserve_mem_gb=12.0,
+            memory_target=0.60,
+            memory_spill=0.70,
+            spill_compression="zstd",
+        )
+        setup_dask_client(config=cfg, dashboard=False, max_workers=4)
+
+        assert mock_decide_topology.call_args.kwargs["workload_type"] == "cpu"
+        assert mock_calculate_memory.call_args.kwargs["reserve_mem_gb"] == 12.0
+
+        # Advanced fields reach create_cluster; max_workers was the only
+        # explicit override and must not have reset anything else.
+        cluster_kwargs = mock_create_cluster.call_args.kwargs
+        assert cluster_kwargs["memory_target"] == 0.60
+        assert cluster_kwargs["memory_spill"] == 0.70
+        assert cluster_kwargs["spill_compression"] == "zstd"
+        assert mock_decide_topology.call_args.kwargs["max_workers"] == 4
+
+    @pytest.mark.unit
+    def test_distinct_configs_resolve_distinctly(self):
+        """Two different configs must not collapse to the same resolution.
+
+        benchmark_config() A/B-tests configurations this way; when the merge
+        was broken every entry produced an identical cluster.
+        """
+        io_cfg = DaskSetupConfig(workload_type="io")
+        cpu_cfg = DaskSetupConfig(workload_type="cpu")
+
+        resolved_io = _resolve_configuration(input_config=io_cfg, dashboard=False)
+        resolved_cpu = _resolve_configuration(input_config=cpu_cfg, dashboard=False)
+
+        assert resolved_io.workload_type == "io"
+        assert resolved_cpu.workload_type == "cpu"
+
+
+class TestModeDispatchHonoursConfiguration:
+    """Non-local modes must honour ds= and the resolved configuration.
+
+    Regression guards for two bugs in the same early-return block:
+    it returned a 3-tuple even when ds= was given (breaking the documented
+    4-tuple contract exactly on Gadi, where mode auto-resolves to pbs or
+    interactive), and it forwarded only workload_type, dropping profile=,
+    config= and every other setting before any merge happened.
+    """
+
+    _RET = ("client", "cluster", "/scratch/tmp")
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("mode", "target"),
+        [
+            ("interactive", "setup_interactive_cluster"),
+            ("pbs", "setup_pbs_cluster"),
+            ("slurm", "setup_slurm_cluster"),
+        ],
+    )
+    def test_ds_yields_a_four_tuple_on_every_mode(self, mode, target):
+        with (
+            patch(f"dask_setup.client.{target}", return_value=self._RET),
+            patch(
+                "dask_setup.client._chunk_recommendations_for", return_value={"time": 240}
+            ) as mock_chunks,
+        ):
+            result = setup_dask_client(ds=MagicMock(), mode=mode)
+
+        # Unpacking this way is what the README documents; it used to raise
+        # ValueError: not enough values to unpack (expected 4, got 3)
+        client, cluster, tmp, chunks = result
+        assert chunks == {"time": 240}
+        assert tmp == "/scratch/tmp"
+        mock_chunks.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("mode", "target"),
+        [
+            ("interactive", "setup_interactive_cluster"),
+            ("pbs", "setup_pbs_cluster"),
+            ("slurm", "setup_slurm_cluster"),
+        ],
+    )
+    def test_no_ds_still_yields_a_three_tuple(self, mode, target):
+        with patch(f"dask_setup.client.{target}", return_value=self._RET):
+            result = setup_dask_client(mode=mode)
+
+        assert len(result) == 3
+
+    @pytest.mark.unit
+    def test_profile_reaches_the_pbs_backend(self):
+        captured = {}
+
+        def fake(cfg):
+            captured["cfg"] = cfg
+            return self._RET
+
+        with patch("dask_setup.client.setup_pbs_cluster", side_effect=fake):
+            setup_dask_client(profile="climate_analysis", mode="pbs")
+
+        # climate_analysis is a cpu profile; this used to arrive as "io"
+        assert captured["cfg"].workload_type == "cpu"
+
+    @pytest.mark.unit
+    def test_config_object_reaches_the_pbs_backend(self):
+        captured = {}
+
+        def fake(cfg):
+            captured["cfg"] = cfg
+            return self._RET
+
+        cfg = DaskSetupConfig(workload_type="gpu", max_workers=4, adaptive=True, min_workers=2)
+        with patch("dask_setup.client.setup_pbs_cluster", side_effect=fake):
+            setup_dask_client(config=cfg, mode="pbs")
+
+        built = captured["cfg"]
+        assert built.workload_type == "gpu"
+        assert built.workers_per_node == 4
+        assert built.adaptive is True
+        assert built.min_jobs == 2
+
+    @pytest.mark.unit
+    def test_explicit_multi_node_config_still_wins(self):
+        from dask_setup.multinode import MultiNodeConfig
+
+        captured = {}
+
+        def fake(cfg):
+            captured["cfg"] = cfg
+            return self._RET
+
+        mine = MultiNodeConfig(workload_type="cpu", cores_per_worker=12, workers_per_node=4)
+        with patch("dask_setup.client.setup_pbs_cluster", side_effect=fake):
+            setup_dask_client(profile="climate_analysis", mode="pbs", multi_node_config=mine)
+
+        assert captured["cfg"] is mine
+
+    @pytest.mark.unit
+    def test_profile_reaches_the_interactive_backend(self):
+        captured = {}
+
+        def fake(**kwargs):
+            captured.update(kwargs)
+            return self._RET
+
+        with patch("dask_setup.client.setup_interactive_cluster", side_effect=fake):
+            setup_dask_client(profile="development", mode="interactive")
+
+        assert captured["workload_type"] == "mixed"
+        assert captured["workers_per_node"] == 2
+        # The full resolved config goes through, so the LocalCluster path
+        # inside setup_interactive_cluster honours reserve_mem_gb too
+        assert captured["config"].reserve_mem_gb == 8.0
+
+    @pytest.mark.unit
+    def test_warns_about_settings_the_batch_backends_cannot_apply(self, caplog):
+        import logging
+
+        with (
+            patch("dask_setup.client.setup_pbs_cluster", return_value=self._RET),
+            caplog.at_level(logging.WARNING, logger="dask_setup.client"),
+        ):
+            setup_dask_client(reserve_mem_gb=99.0, mode="pbs")
+
+        assert any("do not apply to this cluster mode" in r.message for r in caplog.records)
+
+    @pytest.mark.unit
+    def test_no_spurious_warning_for_interactive(self, caplog):
+        """Interactive on one node goes through the local path and honours these."""
+        import logging
+
+        with (
+            patch("dask_setup.client.setup_interactive_cluster", return_value=self._RET),
+            caplog.at_level(logging.WARNING, logger="dask_setup.client"),
+        ):
+            setup_dask_client(reserve_mem_gb=99.0, mode="interactive")
+
+        assert not [r for r in caplog.records if "do not apply" in r.message]
+
+
+class TestSmartReserveDefault:
+    """reserve_mem_gb's default is machine-aware rather than a flat 50 GiB.
+
+    _compute_smart_reserve_default() existed but nothing called it, so every
+    machine got 50.0 -- which on a 16 GiB laptop reserves more than the whole
+    machine and leaves nothing for workers.
+    """
+
+    @pytest.mark.unit
+    def test_bare_call_uses_the_machine_aware_default(self):
+        assert _resolve_configuration().reserve_mem_gb == _compute_smart_reserve_default()
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "total_ram_gb,expected",
+        [
+            (1.0, 1.0),  # validation floor beats the half-machine cap
+            (4.0, 2.0),  # half-machine cap beats the 4 GiB floor
+            (8.0, 4.0),  # clamped to the minimum
+            (16.0, 4.0),  # 3.2 -> clamped to the minimum
+            (64.0, 12.8),
+            (128.0, 25.6),
+            (300.0, 50.0),  # clamped to the maximum
+        ],
+    )
+    def test_formula_is_twenty_percent_clamped(self, total_ram_gb, expected):
+        with patch("dask_setup.client.psutil.virtual_memory") as mock_vm:
+            mock_vm.return_value.total = int(total_ram_gb * 1024**3)
+            assert _compute_smart_reserve_default() == pytest.approx(expected)
+
+    @pytest.mark.unit
+    def test_never_reserves_the_whole_of_a_small_machine(self):
+        for total_ram_gb in (4.0, 8.0, 16.0, 32.0):
+            with patch("dask_setup.client.psutil.virtual_memory") as mock_vm:
+                mock_vm.return_value.total = int(total_ram_gb * 1024**3)
+                assert _compute_smart_reserve_default() < total_ram_gb
+
+    @pytest.mark.unit
+    def test_explicit_argument_still_wins(self):
+        assert _resolve_configuration(reserve_mem_gb=12.5).reserve_mem_gb == 12.5
+
+    @pytest.mark.unit
+    @patch("dask_setup.client.ConfigManager")
+    def test_a_profile_still_wins(self, mock_config_manager):
+        mock_manager = MagicMock()
+        mock_config_manager.return_value = mock_manager
+        mock_manager.get_profile.return_value = ConfigProfile(
+            name="p", config=DaskSetupConfig(reserve_mem_gb=37.0)
+        )
+
+        assert _resolve_configuration(profile="p").reserve_mem_gb == 37.0
+
+    @pytest.mark.unit
+    def test_a_config_object_still_wins(self):
+        cfg = DaskSetupConfig(reserve_mem_gb=21.0)
+        assert _resolve_configuration(input_config=cfg).reserve_mem_gb == 21.0
+
+    @pytest.mark.unit
+    def test_result_always_passes_config_validation(self):
+        """The default must never be a value DaskSetupConfig would reject."""
+        for total_ram_gb in (0.5, 1.0, 2.0, 4.0, 16.0, 64.0, 300.0, 2000.0):
+            with patch("dask_setup.client.psutil.virtual_memory") as mock_vm:
+                mock_vm.return_value.total = int(total_ram_gb * 1024**3)
+                reserve = _compute_smart_reserve_default()
+            # Raises ConfigurationValidationError if out of range.
+            DaskSetupConfig(reserve_mem_gb=reserve)
+
+    @pytest.mark.unit
+    def test_falls_back_to_fifty_if_psutil_fails(self):
+        with patch("dask_setup.client.psutil.virtual_memory", side_effect=OSError("boom")):
+            assert _compute_smart_reserve_default() == 50.0
+
+
+class TestSilenceLogsReachesTheCluster:
+    """config.silence_logs was collected and validated but never passed on.
+
+    create_cluster kept its logging.ERROR default on every run, so the setting
+    did nothing and distributed's own warnings were always suppressed.
+    """
+
+    @staticmethod
+    def _create_cluster_kwargs(config):
+        with (
+            patch(
+                "dask_setup.client.detect_resources",
+                return_value=ResourceSpec(8, 32 * 1024**3, "test"),
+            ),
+            patch("dask_setup.client.decide_topology", return_value=TopologySpec(2, 2, True, "io")),
+            patch("dask_setup.client.validate_topology"),
+            patch("dask_setup.client.create_dask_temp_dir", return_value="/tmp/x"),
+            patch("dask_setup.client.compute_usable_mem_gb", return_value=30.0),
+            patch(
+                "dask_setup.client.calculate_memory_spec",
+                return_value=MemorySpec(32.0, 30.0, 15 * 1024**3, 2.0),
+            ),
+            patch("dask_setup.client.create_cluster") as mock_create,
+            patch("dask_setup.client.Client"),
+            patch("dask_setup.client.print_dashboard_info"),
+        ):
+            setup_dask_client(config=config)
+        return mock_create.call_args.kwargs
+
+    @pytest.mark.unit
+    def test_silence_logs_true_suppresses_worker_output(self):
+        kwargs = self._create_cluster_kwargs(DaskSetupConfig(silence_logs=True))
+        assert kwargs["silence_logs"] == logging.ERROR
+
+    @pytest.mark.unit
+    def test_silence_logs_false_leaves_warnings_visible(self):
+        kwargs = self._create_cluster_kwargs(DaskSetupConfig(silence_logs=False))
+        assert kwargs["silence_logs"] == logging.WARNING
+
+    @pytest.mark.unit
+    def test_the_two_settings_actually_differ(self):
+        quiet = self._create_cluster_kwargs(DaskSetupConfig(silence_logs=True))
+        loud = self._create_cluster_kwargs(DaskSetupConfig(silence_logs=False))
+        assert quiet["silence_logs"] != loud["silence_logs"]

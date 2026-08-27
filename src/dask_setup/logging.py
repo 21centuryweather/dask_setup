@@ -91,10 +91,12 @@ class DaskSetupLogger:
             format_style: Output format style ("structured" or "json")
             include_extra: Whether to include extra context in output
             use_color: Whether to use color coding (auto-detected for terminals)
-        """
-        if cls._configured:
-            return  # Already configured
 
+        Calling this again reconfigures logging.  The handler list is rebuilt
+        from scratch each time, so repeat calls do not stack up duplicate
+        handlers.  ``get_logger`` only auto-configures when nothing has been
+        configured yet, so an explicit call here always wins.
+        """
         # Configure root dask_setup logger
         root_logger = logging.getLogger("dask_setup")
         root_logger.setLevel(level)
@@ -153,9 +155,12 @@ class DaskSetupLogger:
         Returns:
             DaskSetupLoggerAdapter instance
         """
-        # Ensure logging is configured
+        # Ensure logging is configured.  Go through configure_from_env() so the
+        # DASK_SETUP_LOG_* variables take effect without the caller having to
+        # make a configuration call of their own -- by the time user code runs,
+        # some dask_setup module has almost always imported a logger already.
         if not cls._configured:
-            cls.configure()
+            configure_from_env()
 
         # Normalize name
         if not name.startswith("dask_setup."):
@@ -253,7 +258,10 @@ def configure_logging(
     """
     # Convert string level to int if needed
     if isinstance(level, str):
-        level = getattr(logging, level.upper())
+        resolved = getattr(logging, level.upper(), None)
+        if not isinstance(resolved, int):
+            raise ValueError(f"Unknown logging level: {level!r}")
+        level = resolved
 
     # Auto-detect color support if not specified
     if use_color is None:
@@ -276,9 +284,10 @@ def configure_from_env() -> None:
     """
     # Get log level from environment
     level = os.getenv("DASK_SETUP_LOG_LEVEL", "INFO").upper()
-    try:
-        level_int = getattr(logging, level)
-    except AttributeError:
+    level_int = getattr(logging, level, None)
+    if not isinstance(level_int, int):
+        # Unknown name, or a name that happens to be some other logging
+        # attribute (e.g. "GETLOGGER"). Fall back rather than blow up on import.
         level_int = logging.INFO
 
     # Get format style

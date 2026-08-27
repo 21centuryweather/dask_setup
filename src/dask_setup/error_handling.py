@@ -60,13 +60,25 @@ class ErrorContext:
         self._check_dependency("netcdf4", "netCDF4")
 
     def _check_dependency(self, name: str, import_name: str):
-        """Check if a dependency is available and get version."""
+        """Check if a dependency is available and get version.
+
+        Catches ``Exception``, not just ``ImportError``: importing netCDF4 or
+        zarr executes real code and a broken install raises ``OSError`` (a
+        missing shared library), ``ValueError`` (an ABI mismatch against the
+        installed numpy) or anything else its module body chooses to raise.
+        This runs while an error report is being *built*, so a failure here
+        would replace the user's actual problem with an unrelated traceback.
+        """
         try:
             module = __import__(import_name)
             version = getattr(module, "__version__", "unknown")
-            self.available_dependencies[name] = version
         except ImportError:
-            pass
+            return
+        except Exception as e:
+            # Present, but not usable -- worth saying so in a diagnostic report.
+            self.available_dependencies[name] = f"import failed: {type(e).__name__}"
+            return
+        self.available_dependencies[name] = version
 
     def get_environment_summary(self) -> str:
         """Get a summary of the current environment."""

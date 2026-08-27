@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import types
 from typing import TYPE_CHECKING, Any, overload
@@ -9,7 +10,13 @@ from typing import TYPE_CHECKING, Any, overload
 import psutil
 from dask.distributed import Client, LocalCluster
 
-from .cluster import calculate_memory_spec, create_cluster
+from .cluster import (
+    MIN_MEM_PER_WORKER_GB,
+    calculate_memory_spec,
+    compute_usable_mem_gb,
+    create_cluster,
+    fit_workers_to_memory,
+)
 from .config import DaskSetupConfig
 from .config_manager import ConfigManager
 from .dashboard import print_dashboard_info
@@ -33,6 +40,11 @@ from .workload import infer_workload_type
 
 logger = get_logger("client")
 
+#: Fallback workload type for code paths that need a concrete value before the
+#: configuration has been resolved (the multi-node dispatch in particular).
+#: Matches the ``DaskSetupConfig.workload_type`` field default.
+_DEFAULT_WORKLOAD_TYPE = "io"
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -42,35 +54,159 @@ logger = get_logger("client")
 def _compute_smart_reserve_default() -> float:
     """Compute a sensible reserve_mem_gb default based on available system RAM.
 
-    Formula: 20 % of total RAM, minimum 4 GiB, maximum 50 GiB.
+    Formula: 20 % of total RAM, clamped to [4 GiB, 50 GiB], and never more
+    than half the machine.
 
     Examples
     --------
-    - 16 GiB laptop  → max(4.0, 3.2)  = 4.0 GiB  (clamped to minimum)
+    - 1 GiB container    → max(1.0, 0.5)   =  1.0 GiB  (validation floor)
+    - 4 GiB container    → min(4.0, 2.0)   =  2.0 GiB  (half-machine cap)
+    - 16 GiB laptop      → max(4.0, 3.2)   =  4.0 GiB  (clamped to minimum)
     - 64 GiB workstation → 12.8 GiB
     - 300 GiB Gadi node  → min(50.0, 60.0) = 50.0 GiB  (clamped to maximum)
+
+    The half-machine cap matters on small hosts: without it the 4 GiB floor
+    reserves the entire machine on a 4 GiB container, leaving nothing at all
+    for workers -- the same failure the flat 50 GiB default caused on a laptop,
+    just further down the scale.
 
     Falls back to 50.0 GiB if psutil fails for any reason.
     """
     try:
         total_ram_gb = psutil.virtual_memory().total / (1024**3)
         smart_reserve = min(50.0, max(4.0, total_ram_gb * 0.20))
-        # Cap the smart reserve at 50.0 GiB as a safe HPC default
-        return min(50.0, smart_reserve)
+        # DaskSetupConfig validates reserve_mem_gb into [1.0, 1000.0]; the
+        # half-machine cap must not push the default below its own floor.
+        return max(1.0, min(smart_reserve, total_ram_gb * 0.5))
     except Exception:
         return 50.0  # Safe HPC fallback if psutil is unexpectedly unavailable
 
 
+def _chunk_recommendations_for(
+    ds: Any,
+    client: Client,
+    workload_type: str,
+    verbose: bool,
+) -> dict[str, int]:
+    """Validate *ds*'s current chunking and return recommendations for it.
+
+    Returns an empty dict when xarray/numpy are unavailable, so callers can
+    always honour the documented 4-tuple return shape.
+    """
+    try:
+        from .xarray import recommend_chunks, validate_chunks
+
+        # First, warn about any problematic existing chunking
+        validate_chunks(ds, client=client)
+
+        raw = recommend_chunks(
+            ds,
+            client=client,
+            workload_type=workload_type,
+            verbose=verbose,
+        )
+        chunks = raw.chunks if hasattr(raw, "chunks") else raw
+        logger.info("Chunk recommendations computed", chunks=str(chunks))
+        return dict(chunks)
+    except ImportError:
+        logger.warning(
+            "ds= provided but xarray/numpy are not installed — "
+            "skipping chunk validation and recommendations"
+        )
+        return {}
+
+
+def _multi_node_config_from(config: DaskSetupConfig) -> MultiNodeConfig:
+    """Build a :class:`MultiNodeConfig` from a resolved single-node config.
+
+    Used when a multi-node mode is selected without an explicit
+    ``multi_node_config=``. Only the fields the two objects genuinely share
+    are carried across; job-shape settings (cores per worker, walltime, queue,
+    project) have no single-node equivalent and keep their defaults.
+    """
+    workload_type = config.workload_type
+    if workload_type == "auto":
+        # MultiNodeConfig accepts "auto", but the backends need something
+        # concrete and there is no dataset to infer from at this point.
+        workload_type = _DEFAULT_WORKLOAD_TYPE
+
+    kwargs: dict[str, Any] = {"workload_type": workload_type}
+    if config.max_workers is not None:
+        kwargs["workers_per_node"] = config.max_workers
+    if config.adaptive:
+        kwargs["adaptive"] = True
+        if config.min_workers is not None:
+            kwargs["min_jobs"] = config.min_workers
+            kwargs["max_jobs"] = max(config.min_workers, MultiNodeConfig().max_jobs)
+    if config.temp_base_dir:
+        kwargs["shared_tmp_dir"] = config.temp_base_dir
+
+    return MultiNodeConfig(**kwargs)
+
+
+#: Config fields that only a single-node LocalCluster can honour.  On the
+#: multi-node paths these are the caller's job-script's business instead, so
+#: say so rather than pretending they were applied.
+_LOCAL_ONLY_CONFIG_FIELDS: tuple[tuple[str, Any], ...] = (
+    # reserve_mem_gb is deliberately absent: its default is machine-aware
+    # (see _compute_smart_reserve_default), so a value-vs-default comparison
+    # would flag it as "explicitly set" on every machine with under 250 GiB of
+    # RAM and warn about a setting the caller never touched.  It is handled
+    # separately in _warn_unsupported_multinode_options.
+    ("max_mem_gb", None),
+    ("memory_target", 0.75),
+    ("memory_spill", 0.85),
+    ("spill_compression", "auto"),
+    ("spill_threads", None),
+    ("dashboard_port", None),
+)
+
+
+def _warn_unsupported_multinode_options(
+    resolved_mode: str,
+    config: DaskSetupConfig,
+) -> None:
+    """Log which resolved settings the selected backend cannot apply.
+
+    Only for ``"pbs"`` / ``"slurm"``, where worker resources come from the
+    submitted job script rather than from this process.  ``"interactive"`` on a
+    single allocated node goes through the normal local path and honours
+    everything; on a multi-node allocation the SSHCluster uses per-node
+    defaults, which :func:`~dask_setup.multinode.setup_interactive_cluster`
+    documents.
+    """
+    if resolved_mode not in {"pbs", "slurm"}:
+        return
+
+    ignored = [
+        name
+        for name, default in _LOCAL_ONLY_CONFIG_FIELDS
+        if getattr(config, name, default) != default
+    ]
+    # Only report reserve_mem_gb when it differs from both the static default
+    # and the machine-aware one this process would have chosen on its own.
+    reserve = getattr(config, "reserve_mem_gb", None)
+    if reserve is not None and reserve not in (50.0, _compute_smart_reserve_default()):
+        ignored.insert(0, "reserve_mem_gb")
+    if ignored:
+        logger.warning(
+            "Some settings do not apply to this cluster mode and were not used",
+            mode=resolved_mode,
+            ignored=",".join(ignored),
+            hint="set these via MultiNodeConfig or the worker job script instead",
+        )
+
+
 def _resolve_configuration(
     profile: str | None = None,
-    workload_type: str = "io",
+    workload_type: str | None = None,
     max_workers: int | None = None,
     reserve_mem_gb: float | None = None,
     max_mem_gb: float | None = None,
-    dashboard: bool = True,
-    adaptive: bool = False,
+    dashboard: bool | None = None,
+    adaptive: bool | None = None,
     min_workers: int | None = None,
-    suggest_chunks: bool = False,
+    suggest_chunks: bool | None = None,
     input_config: DaskSetupConfig | None = None,
 ) -> DaskSetupConfig:
     """Resolve final configuration from a profile and explicit parameters.
@@ -78,33 +214,47 @@ def _resolve_configuration(
     Priority order (highest to lowest):
 
     1. Explicit keyword parameters passed to ``setup_dask_client()``
-    2. Profile (``profile=``)
-    3. Defaults — ``reserve_mem_gb`` uses a smart default (20 % RAM, 4–50 GiB)
+    2. Profile (``profile=``) **or** ``config=`` object (*input_config*)
+    3. Library defaults (:class:`DaskSetupConfig` field defaults)
+
+    Every parameter below uses ``None`` to mean "not supplied by the caller".
+    Only non-``None`` values are treated as explicit overrides, so the base
+    configuration keeps every field the caller did not name.
+
+    .. note::
+
+       ``profile=`` and ``config=`` do **not** layer on top of each other --
+       whichever is given supplies the base, and if both are given the profile
+       wins outright.  Layering them properly would need to know which fields a
+       profile's YAML actually set: a :class:`ConfigProfile` holds a fully
+       populated :class:`DaskSetupConfig`, so merging one over a caller's
+       config object would apply the profile's *untouched defaults* too and
+       silently wipe settings the caller had deliberately chosen.  Pass one or
+       the other, and use explicit keyword arguments for the differences.
 
     Args:
         profile: Profile name to load from disk/builtins as the base configuration.
-        workload_type: Workload type override.
-        max_workers: Maximum workers cap.
-        reserve_mem_gb: Memory to reserve (GiB). ``None`` → compute smart default.
-        max_mem_gb: Total memory cap (GiB).
-        dashboard: Whether to start the dashboard.
-        adaptive: Enable adaptive scaling.
-        min_workers: Minimum workers when adaptive=True.
-        suggest_chunks: Print xarray chunking hints after setup.
+        workload_type: Workload type override, or ``None`` to inherit.
+        max_workers: Maximum workers cap, or ``None`` to inherit.
+        reserve_mem_gb: Memory to reserve (GiB), or ``None`` to inherit.
+        max_mem_gb: Total memory cap (GiB), or ``None`` to inherit.
+        dashboard: Whether to start the dashboard, or ``None`` to inherit.
+        adaptive: Enable adaptive scaling, or ``None`` to inherit.
+        min_workers: Minimum workers when adaptive=True, or ``None`` to inherit.
+        suggest_chunks: Print xarray chunking hints, or ``None`` to inherit.
+        input_config: Pre-built configuration supplied via ``config=``.
 
     Returns:
         Resolved DaskSetupConfig
-
-    Note:
-        The heuristic that detects "explicitly set" parameters compares each value
-        against its default.  Edge case: if you deliberately pass a value equal to
-        the default (e.g. ``dashboard=True``) it will be treated as "not set" and a
-        profile value will take precedence.
     """
-    # Build defaults - use provided reserve_mem_gb or fallback to smart default
-    defaults = DaskSetupConfig(
-        reserve_mem_gb=reserve_mem_gb if reserve_mem_gb is not None else 50.0
-    )
+    # The library default for reserve_mem_gb scales with the machine.  A flat
+    # 50 GiB is right for a Gadi node and catastrophic on a 16 GiB laptop,
+    # where it reserves the entire machine and leaves nothing for workers.
+    # DaskSetupConfig keeps a static default because profiles serialise to
+    # JSON and need a concrete number; the machine-aware value is applied here,
+    # at the bottom of the precedence stack, so any profile, config object or
+    # explicit argument still overrides it.
+    defaults = DaskSetupConfig(reserve_mem_gb=_compute_smart_reserve_default())
     logger.debug("Configuration defaults set", reserve_mem_gb=defaults.reserve_mem_gb)
 
     # Resolve the base configuration.
@@ -124,39 +274,36 @@ def _resolve_configuration(
         base_config = profile_obj.config
         logger.debug("Loaded profile as base", profile=profile)
 
-    # Collect explicitly-provided keyword overrides.
+    # Collect explicitly-provided keyword overrides.  A parameter is "explicit"
+    # if and only if the caller passed something other than None — no value
+    # comparison, so passing a value that happens to equal the library default
+    # still overrides the profile.
+    candidates: dict[str, Any] = {
+        "workload_type": workload_type,
+        "max_workers": max_workers,
+        "reserve_mem_gb": reserve_mem_gb,
+        "max_mem_gb": max_mem_gb,
+        "dashboard": dashboard,
+        "adaptive": adaptive,
+        "min_workers": min_workers,
+        "suggest_chunks": suggest_chunks,
+    }
+    explicit_params: dict[str, Any] = {k: v for k, v in candidates.items() if v is not None}
+
+    # Merge configurations: defaults < input_config < profile < explicit overrides.
     #
-    # Note: This heuristic compares each value against its default to decide whether it was
-    # explicitly set. Edge case: if you deliberately pass a value that *equals* the default
-    # (e.g. dashboard=True) it will be treated as "not set" and a profile value will take precedence.
-    explicit_params: dict[str, Any] = {}
-
-    if workload_type != "io":
-        explicit_params["workload_type"] = workload_type
-    if max_workers is not None:
-        explicit_params["max_workers"] = max_workers
-    if reserve_mem_gb is not None:
-        # Explicit float means "user chose this"
-        explicit_params["reserve_mem_gb"] = reserve_mem_gb
-    if max_mem_gb is not None:
-        explicit_params["max_mem_gb"] = max_mem_gb
-    if dashboard is not True:
-        explicit_params["dashboard"] = dashboard
-    if adaptive is not False:
-        explicit_params["adaptive"] = adaptive
-    if min_workers is not None:
-        explicit_params["min_workers"] = min_workers
-    if suggest_chunks is not False:
-        explicit_params["suggest_chunks"] = suggest_chunks
-
-    explicit_config = DaskSetupConfig(**explicit_params) if explicit_params else None
-
-    # Merge configurations: defaults < input_config < profile < explicit overrides
+    # The explicit layer is applied with merge_overrides() rather than
+    # merge_with(): building a DaskSetupConfig from explicit_params would also
+    # carry every untouched dataclass default (workload_type="io",
+    # memory_target=0.75, spill_compression="auto", ...), and merge_with()
+    # applies all non-None fields — which would wipe the profile.
     final_config = defaults
     if base_config:
         final_config = final_config.merge_with(base_config)
-    if explicit_config:
-        final_config = final_config.merge_with(explicit_config)
+    final_config = final_config.merge_overrides(explicit_params)
+
+    if explicit_params:
+        logger.debug("Explicit overrides applied", fields=",".join(sorted(explicit_params)))
 
     return final_config
 
@@ -259,15 +406,15 @@ class DaskClientContext:
 
 @overload
 def setup_dask_client(
-    workload_type: str = ...,
+    workload_type: str | None = ...,
     max_workers: int | None = ...,
     reserve_mem_gb: float | None = ...,
     max_mem_gb: float | None = ...,
-    dashboard: bool = ...,
-    adaptive: bool = ...,
+    dashboard: bool | None = ...,
+    adaptive: bool | None = ...,
     min_workers: int | None = ...,
     profile: str | None = ...,
-    suggest_chunks: bool = ...,
+    suggest_chunks: bool | None = ...,
     config: DaskSetupConfig | None = ...,
     ds: None = ...,
     fallback_on_detection_failure: bool = ...,
@@ -279,15 +426,15 @@ def setup_dask_client(
 
 @overload
 def setup_dask_client(
-    workload_type: str = ...,
+    workload_type: str | None = ...,
     max_workers: int | None = ...,
     reserve_mem_gb: float | None = ...,
     max_mem_gb: float | None = ...,
-    dashboard: bool = ...,
-    adaptive: bool = ...,
+    dashboard: bool | None = ...,
+    adaptive: bool | None = ...,
     min_workers: int | None = ...,
     profile: str | None = ...,
-    suggest_chunks: bool = ...,
+    suggest_chunks: bool | None = ...,
     config: DaskSetupConfig | None = ...,
     ds: xr.Dataset | xr.DataArray = ...,
     fallback_on_detection_failure: bool = ...,
@@ -298,15 +445,15 @@ def setup_dask_client(
 
 
 def setup_dask_client(
-    workload_type: str = "io",
+    workload_type: str | None = None,
     max_workers: int | None = None,
-    reserve_mem_gb: float = 50.0,
+    reserve_mem_gb: float | None = None,
     max_mem_gb: float | None = None,
-    dashboard: bool = True,
-    adaptive: bool = False,
+    dashboard: bool | None = None,
+    adaptive: bool | None = None,
     min_workers: int | None = None,
     profile: str | None = None,
-    suggest_chunks: bool = False,
+    suggest_chunks: bool | None = None,
     config: DaskSetupConfig | None = None,
     ds: Any = None,  # xr.Dataset | xr.DataArray | None
     fallback_on_detection_failure: bool = False,
@@ -318,38 +465,61 @@ def setup_dask_client(
 
     Routes temp/spill to ``$PBS_JOBFS`` when present.
 
+    Every configuration parameter below defaults to ``None``, meaning "not
+    supplied".  Values are resolved in this order, highest priority first:
+
+    1. Parameters you pass explicitly here
+    2. ``profile=``
+    3. ``config=``
+    4. :class:`~dask_setup.config.DaskSetupConfig` field defaults
+
+    A parameter you leave at ``None`` keeps whatever the profile or config
+    object specifies; a parameter you pass always wins, even when the value
+    happens to equal the library default.
+
     Parameters
     ----------
-    workload_type : {"cpu","io","mixed"}
+    workload_type : {"cpu","io","mixed","gpu","auto"} or None
         Shape worker topology for CPU-bound, I/O-bound, or mixed workloads.
+        ``None`` inherits from the profile/config, falling back to ``"io"``.
     max_workers : int or None
         Cap on worker processes. Defaults to all logical cores available.
     reserve_mem_gb : float or None
         Memory to reserve for OS / cache / filesystem (GiB).
-        When ``None`` (the default), a smart default is chosen automatically:
-        20 % of total RAM, clamped to [4 GiB, 50 GiB].
-        Pass an explicit value to override (e.g. ``reserve_mem_gb=8.0``).
+        ``None`` inherits from the profile/config, falling back to a
+        machine-aware default: 20% of total RAM, clamped to [4.0, 50.0] GiB.
     max_mem_gb : float or None
         Cap total memory used by Dask. Default is node total.
-    dashboard : bool
-        If True, start a dashboard on a random free port and print an SSH tunnel hint.
-    adaptive : bool
+    dashboard : bool or None
+        If True, start a dashboard on a random free port and print an SSH
+        tunnel hint. ``None`` inherits, falling back to True.
+    adaptive : bool or None
         Enable single-node adaptive scaling (elastic number of workers).
+        ``None`` inherits, falling back to False.
     min_workers : int or None
         Minimum workers when adaptive=True.
     profile : str or None
-        Name of configuration profile to use. Profile settings are overridden by
-        explicit parameters. Mutually exclusive with ``config``.
+        Name of configuration profile to use.  Profile settings override
+        ``config=`` and are in turn overridden by explicit parameters.  Pass
+        ``"auto"`` to select a profile from the detected resources.
     suggest_chunks : bool
         If True, print xarray chunking recommendations after cluster setup.
         When ``ds=`` is also provided, the recommendations are computed from
         the actual dataset.  Without ``ds=``, generic guidance is printed.
         Requires xarray and numpy to be installed.
     config : DaskSetupConfig or None
-        A pre-built configuration object. When provided, all other parameters
-        except explicit overrides are ignored. Mutually exclusive with ``profile``.
-        This is the recommended way to avoid the default-value ambiguity that
-        occurs with individual keyword parameters.
+        A pre-built configuration object supplying every field at once.  This
+        is the recommended way to avoid the default-value ambiguity that occurs
+        with individual keyword parameters.
+
+        The full precedence, lowest to highest, is::
+
+            library defaults  <  config= or profile=  <  explicit keywords
+
+        ``config=`` and ``profile=`` occupy the same layer rather than stacking:
+        passing both is allowed, but the profile supplies the base and the
+        config object is ignored.  Use explicit keyword arguments for anything
+        you want on top.
     ds : xr.Dataset, xr.DataArray, or None
         Optional xarray dataset.  When provided:
 
@@ -464,31 +634,6 @@ def setup_dask_client(
         resolved_mode = detect_cluster_mode()
         logger.debug("Mode auto-resolved", mode=resolved_mode)
 
-    if resolved_mode == "interactive":
-        logger.info("Interactive cluster mode — using already-allocated nodes")
-        client, cluster, tmp_path = setup_interactive_cluster(
-            workload_type=workload_type,
-        )
-        return client, cluster, tmp_path  # type: ignore[return-value]
-
-    if resolved_mode in {"pbs", "slurm"}:
-        mn_cfg = multi_node_config
-        if mn_cfg is None:
-            # Build a minimal MultiNodeConfig from whatever was passed
-            mn_cfg = MultiNodeConfig(workload_type=workload_type)
-
-        logger.info("Multi-node cluster mode", mode=resolved_mode)
-        if resolved_mode == "pbs":
-            client, cluster, shared_tmp = setup_pbs_cluster(mn_cfg)
-        else:
-            client, cluster, shared_tmp = setup_slurm_cluster(mn_cfg)
-
-        tmp_path = str(shared_tmp) if shared_tmp is not None else ""
-        # Multi-node path always returns a 3-tuple (no chunk recommendation)
-        return client, cluster, tmp_path  # type: ignore[return-value]
-
-    logger.info("Starting Dask client setup", workload_type=workload_type, environment=env_type)
-
     # --- Profile auto-selection -----------------------------------------
     # Must happen before _resolve_configuration so the selected profile name
     # can be passed in. Requires a preliminary resource detection pass.
@@ -502,17 +647,80 @@ def setup_dask_client(
         profile = _CM().auto_select_profile(_pre_resources)
         logger.info("Auto-selected profile", profile=profile)
 
+    # ------------------------------------------------------------------
+    # Multi-node dispatch — if the resolved mode is not "local", hand off to
+    # the appropriate backend and return early.
+    #
+    # Configuration is resolved *before* this dispatch so the multi-node
+    # backends see the caller's profile/config too. They previously read the
+    # raw workload_type keyword and dropped everything else on the floor.
+    # ------------------------------------------------------------------
+    if resolved_mode != "local":
+        mn_resolved = _resolve_configuration(
+            profile=profile,
+            workload_type=workload_type,
+            max_workers=max_workers,
+            reserve_mem_gb=reserve_mem_gb,
+            max_mem_gb=max_mem_gb,
+            dashboard=dashboard,
+            adaptive=adaptive,
+            min_workers=min_workers,
+            suggest_chunks=suggest_chunks,
+            input_config=config,
+        )
+        _warn_unsupported_multinode_options(resolved_mode, mn_resolved)
+
+        if resolved_mode == "interactive":
+            logger.info("Interactive cluster mode — using already-allocated nodes")
+            client, cluster, tmp_path = setup_interactive_cluster(
+                workload_type=mn_resolved.workload_type,
+                workers_per_node=mn_resolved.max_workers,
+                config=mn_resolved,
+            )
+        else:
+            mn_cfg = multi_node_config
+            if mn_cfg is None:
+                mn_cfg = _multi_node_config_from(mn_resolved)
+                logger.debug(
+                    "Built MultiNodeConfig from the resolved configuration",
+                    workload_type=mn_cfg.workload_type,
+                    adaptive=mn_cfg.adaptive,
+                )
+
+            logger.info("Multi-node cluster mode", mode=resolved_mode)
+            if resolved_mode == "pbs":
+                client, cluster, shared_tmp = setup_pbs_cluster(mn_cfg)
+            else:
+                client, cluster, shared_tmp = setup_slurm_cluster(mn_cfg)
+            tmp_path = str(shared_tmp) if shared_tmp is not None else ""
+
+        # Chunk recommendations need a live client, which we now have — so
+        # the ds= contract (4-tuple) holds on these paths too.
+        if ds is not None:
+            chunks = _chunk_recommendations_for(
+                ds, client, mn_resolved.workload_type, mn_resolved.suggest_chunks
+            )
+            return client, cluster, tmp_path, chunks  # type: ignore[return-value]
+        return client, cluster, tmp_path  # type: ignore[return-value]
+
+    logger.info(
+        "Starting Dask client setup",
+        workload_type=workload_type or _DEFAULT_WORKLOAD_TYPE,
+        environment=env_type,
+    )
+
     # Load and merge configuration.
     # Save the caller-supplied config object before the local variable is
     # rebound by _resolve_configuration so it can be used as the base layer.
+    # Every keyword below is forwarded verbatim: None means "caller did not
+    # supply this", so profile/config values survive for unnamed parameters.
     _input_config = config
-    resolved_reserve_mem = reserve_mem_gb if reserve_mem_gb is not None else 50.0
 
     config = _resolve_configuration(
         profile=profile,
         workload_type=workload_type,
         max_workers=max_workers,
-        reserve_mem_gb=resolved_reserve_mem,
+        reserve_mem_gb=reserve_mem_gb,
         max_mem_gb=max_mem_gb,
         dashboard=dashboard,
         adaptive=adaptive,
@@ -575,6 +783,40 @@ def setup_dask_client(
     # Validate topology makes sense
     validate_topology(topology, resources.total_cores)
 
+    # --- Fit the worker count to available memory -----------------------
+    # Dask's memory_limit is per-worker, so N workers each floored at the
+    # minimum budget commit N * minimum in total.  On a core-rich but
+    # memory-tight node that silently exceeds the node's RAM and eats the
+    # whole reservation.  Reduce the worker count instead.
+    try:
+        _usable_gb = compute_usable_mem_gb(
+            total_mem_bytes=resources.total_mem_bytes,
+            reserve_mem_gb=config.reserve_mem_gb,
+            max_mem_gb=config.max_mem_gb,
+        )
+    except ValueError:
+        # Leave the reporting of this to calculate_memory_spec below, which
+        # raises the same error with the full InsufficientResourcesError context.
+        _usable_gb = None
+
+    if _usable_gb is not None:
+        fitted_workers = fit_workers_to_memory(_usable_gb, topology.n_workers)
+        if fitted_workers < topology.n_workers:
+            logger.warning(
+                "Reducing worker count to fit available memory",
+                requested_workers=topology.n_workers,
+                fitted_workers=fitted_workers,
+                usable_mem_gib=f"{_usable_gb:.1f}",
+                min_per_worker_gib=f"{MIN_MEM_PER_WORKER_GB:.1f}",
+                hint="raise max_mem_gb or lower reserve_mem_gb for more workers",
+            )
+            print(
+                f"[setup_dask_client] Reduced workers {topology.n_workers} -> {fitted_workers} "
+                f"so each keeps at least {MIN_MEM_PER_WORKER_GB:.1f} GiB "
+                f"({_usable_gb:.1f} GiB usable)."
+            )
+            topology = topology._replace(n_workers=fitted_workers)
+
     # Calculate memory allocation
     try:
         memory_spec = calculate_memory_spec(
@@ -619,6 +861,11 @@ def setup_dask_client(
         memory_spec=memory_spec,
         temp_dir=temp_dir,
         dashboard_address=dashboard_address,
+        # config.silence_logs was collected, validated and serialised but never
+        # reached the cluster: every run got logging.ERROR regardless. False
+        # (the default) now means distributed's own default level, so worker
+        # warnings -- memory pressure, paused workers -- are visible again.
+        silence_logs=logging.ERROR if config.silence_logs else logging.WARNING,
         adaptive=config.adaptive,
         min_workers=config.min_workers,
         memory_target=config.memory_target,
@@ -684,28 +931,9 @@ def setup_dask_client(
     chunk_recommendations: dict[str, int] | None = None
 
     if ds is not None:
-        try:
-            from .xarray import recommend_chunks, validate_chunks
-
-            # First, warn about any problematic existing chunking
-            validate_chunks(ds, client=client)
-
-            # Compute chunk recommendations for this specific dataset + cluster
-            raw = recommend_chunks(
-                ds,
-                client=client,
-                workload_type=config.workload_type,
-                verbose=config.suggest_chunks,
-            )
-            # recommend_chunks always returns ChunkRecommendation
-            chunk_recommendations = raw.chunks if hasattr(raw, "chunks") else raw
-            logger.info("Chunk recommendations computed", chunks=str(chunk_recommendations))
-
-        except ImportError:
-            logger.warning(
-                "ds= provided but xarray/numpy are not installed — "
-                "skipping chunk validation and recommendations"
-            )
+        chunk_recommendations = _chunk_recommendations_for(
+            ds, client, config.workload_type, config.suggest_chunks
+        )
 
     elif config.suggest_chunks:
         # No dataset provided — print generic cluster-based guidance

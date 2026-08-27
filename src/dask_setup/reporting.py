@@ -31,6 +31,36 @@ if TYPE_CHECKING:
 
 logger = get_logger("reporting")
 
+#: Worker-metric keys that have carried spill volume across Dask versions, in
+#: preference order.  Current ``distributed`` (2023.3+) reports
+#: ``spilled_bytes``; the older names are kept so the reading still works on
+#: legacy clusters.
+_SPILL_METRIC_KEYS: tuple[str, ...] = ("spilled_bytes", "spilled_memory", "spill")
+
+
+def worker_spill_bytes(metrics: dict[str, Any]) -> int:
+    """Return bytes spilled to disk by one worker, from its heartbeat metrics.
+
+    Current ``distributed`` reports ``spilled_bytes`` as a mapping of
+    ``{"memory": <in-memory size of spilled data>, "disk": <bytes on disk>}``.
+    The *disk* figure is the spill volume users care about.  Older versions
+    used a plain integer under a different key.
+
+    Returns ``0`` when no recognised key is present, so a metric rename in a
+    future Dask release degrades to "no data" rather than a crash.
+
+    Args:
+        metrics: The ``metrics`` sub-dict of one worker's ``scheduler_info``.
+    """
+    for key in _SPILL_METRIC_KEYS:
+        value = metrics.get(key)
+        if isinstance(value, dict):
+            disk = value.get("disk") or 0
+            return int(disk)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return int(value)
+    return 0
+
 
 @dataclass
 class ClusterReport:
@@ -204,13 +234,7 @@ def cluster_report(
             if mem_bytes:
                 report.memory_per_worker_gib[worker_addr] = mem_bytes / (1024**3)
 
-            # Spill: try several key names used across Dask versions
-            spill_val = metrics.get("spilled_memory") or metrics.get("spill")
-            if isinstance(spill_val, dict):
-                # Newer format: {"disk": bytes, "memory": bytes}
-                total_spill_bytes += spill_val.get("disk", 0) or 0
-            elif isinstance(spill_val, int | float):
-                total_spill_bytes += int(spill_val)
+            total_spill_bytes += worker_spill_bytes(metrics)
 
         report.total_spill_gib = total_spill_bytes / (1024**3)
 

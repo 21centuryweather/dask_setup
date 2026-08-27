@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import contextlib
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+@contextlib.contextmanager
+def _fake_sampler(payload):
+    """Stand-in for _sample_peak_memory yielding a fixed sample result."""
+    yield payload
+
 
 # ---------------------------------------------------------------------------
 # Helpers — lightweight stubs so tests run without a real Dask cluster
@@ -515,3 +523,200 @@ def test_version_is_2():
     import dask_setup
 
     assert dask_setup.__version__.startswith("2.")
+
+
+class TestScalingSweepActuallyScales:
+    """The sweep's default config pinned every run to a single worker.
+
+    decide_topology() sets n_workers=1 for workload_type="io" regardless of
+    max_workers, and "io" is DaskSetupConfig's default -- so scaling_analysis
+    built the same one-worker cluster at every point and reported the resulting
+    timing noise as a scaling curve.
+    """
+
+    @pytest.mark.unit
+    def test_default_base_config_uses_a_scaling_workload_type(self):
+        from dask_setup.benchmark import scaling_analysis
+        from dask_setup.config import DaskSetupConfig
+
+        captured: list[DaskSetupConfig] = []
+
+        def fake_setup(*_args, config=None, **_kwargs):
+            captured.append(config)
+            raise RuntimeError("stop here — we only want the config")
+
+        with patch("dask_setup.client.setup_dask_client", side_effect=fake_setup):
+            scaling_analysis(MagicMock(), worker_counts=(1, 2, 4))
+
+        assert captured, "setup_dask_client was never called"
+        assert all(c.workload_type == "cpu" for c in captured)
+
+    @pytest.mark.unit
+    def test_requested_worker_count_reaches_the_config(self):
+        from dask_setup.benchmark import scaling_analysis
+
+        captured = []
+
+        def fake_setup(*_args, config=None, **_kwargs):
+            captured.append((config.max_workers, config.adaptive))
+            raise RuntimeError("stop")
+
+        with patch("dask_setup.client.setup_dask_client", side_effect=fake_setup):
+            scaling_analysis(MagicMock(), worker_counts=(1, 2, 8))
+
+        assert [n for n, _ in captured] == [1, 2, 8]
+        assert all(adaptive is False for _, adaptive in captured)
+
+    @pytest.mark.unit
+    def test_topology_honours_the_sweep_for_cpu_but_not_io(self):
+        """The reason the default had to change, stated as an assertion."""
+        from dask_setup.topology import decide_topology
+
+        io_counts = [decide_topology("io", 32, max_workers=n).n_workers for n in (1, 2, 4, 8)]
+        cpu_counts = [decide_topology("cpu", 32, max_workers=n).n_workers for n in (1, 2, 4, 8)]
+
+        assert io_counts == [1, 1, 1, 1]
+        assert cpu_counts == [1, 2, 4, 8]
+
+
+class TestScalingEfficiencyNormalisation:
+    """Efficiency divided by the absolute worker count, not the worker ratio.
+
+    A sweep starting anywhere other than 1 worker therefore reported a
+    fraction of its true efficiency: a perfectly scaling (4, 8) sweep scored
+    0.25 at its own baseline instead of 1.0.
+    """
+
+    @staticmethod
+    def _sweep(counts, times):
+        from dask_setup.benchmark import BenchmarkResult, scaling_analysis
+
+        results = iter(
+            BenchmarkResult(name=f"workers={n}", wall_time_seconds=t, n_workers=n)
+            for n, t in zip(counts, times, strict=True)
+        )
+
+        with (
+            patch(
+                "dask_setup.client.setup_dask_client",
+                return_value=(MagicMock(), MagicMock(), "/tmp"),
+            ),
+            patch("dask_setup.benchmark._measure_one", side_effect=lambda **_k: next(results)),
+        ):
+            return scaling_analysis(MagicMock(), worker_counts=counts)
+
+    @pytest.mark.unit
+    def test_baseline_efficiency_is_one_when_the_sweep_starts_at_one(self):
+        scaling = self._sweep((1, 2, 4), (8.0, 4.0, 2.0))
+        assert scaling.efficiencies[0] == pytest.approx(1.0)
+
+    @pytest.mark.unit
+    def test_baseline_efficiency_is_one_when_the_sweep_starts_at_four(self):
+        """Used to report 0.25 for a baseline that is by definition 100%."""
+        scaling = self._sweep((4, 8), (8.0, 4.0))
+        assert scaling.efficiencies[0] == pytest.approx(1.0)
+
+    @pytest.mark.unit
+    def test_perfect_scaling_from_a_non_unit_baseline_stays_at_one(self):
+        scaling = self._sweep((4, 8, 16), (8.0, 4.0, 2.0))
+        assert scaling.efficiencies == pytest.approx([1.0, 1.0, 1.0])
+
+    @pytest.mark.unit
+    def test_half_efficiency_is_reported_as_half(self):
+        # 4 -> 8 workers halves nothing: same time means efficiency 0.5
+        scaling = self._sweep((4, 8), (8.0, 8.0))
+        assert scaling.efficiencies[1] == pytest.approx(0.5)
+
+    @pytest.mark.unit
+    def test_speedups_are_unchanged(self):
+        scaling = self._sweep((4, 8), (8.0, 4.0))
+        assert scaling.speedups == pytest.approx([1.0, 2.0])
+
+
+class TestPeakMemoryIsSampledDuringTheRun:
+    """peak_memory_gib came from a report taken after .compute() returned.
+
+    By then the workers have released the data, so the "peak" was near zero
+    for exactly the workloads whose memory use matters.
+    """
+
+    @pytest.mark.unit
+    def test_sampled_peak_is_preferred_over_the_post_run_reading(self):
+        from dask_setup.benchmark import _measure_one
+        from dask_setup.reporting import ClusterReport
+
+        client = MagicMock()
+        client.scheduler_info.return_value = {"workers": {"a": {}}}
+
+        after_the_fact = ClusterReport(memory_per_worker_gib={"a": 0.01})
+
+        with (
+            patch("dask_setup.reporting.cluster_report", return_value=after_the_fact),
+            patch(
+                "dask_setup.benchmark._sample_peak_memory",
+                lambda _c: _fake_sampler({"peak_gib": 7.5, "sampled": True}),
+            ),
+        ):
+            result = _measure_one(
+                ds=MagicMock(),
+                operation_fn=lambda d: MagicMock(),
+                client=client,
+                repeats=1,
+                warmup=False,
+                name="t",
+            )
+
+        assert result.peak_memory_gib == pytest.approx(7.5)
+        assert not any("lower bound" in e for e in result.errors)
+
+    @pytest.mark.unit
+    def test_unsampled_run_says_so_instead_of_reporting_a_fake_peak(self):
+        from dask_setup.benchmark import _measure_one
+        from dask_setup.reporting import ClusterReport
+
+        client = MagicMock()
+        client.scheduler_info.return_value = {"workers": {"a": {}}}
+
+        with (
+            patch(
+                "dask_setup.reporting.cluster_report",
+                return_value=ClusterReport(memory_per_worker_gib={"a": 0.01}),
+            ),
+            patch(
+                "dask_setup.benchmark._sample_peak_memory",
+                lambda _c: _fake_sampler({"peak_gib": 0.0, "sampled": False}),
+            ),
+        ):
+            result = _measure_one(
+                ds=MagicMock(),
+                operation_fn=lambda d: MagicMock(),
+                client=client,
+                repeats=1,
+                warmup=False,
+                name="t",
+            )
+
+        assert any("lower bound" in e for e in result.errors)
+
+    @pytest.mark.unit
+    def test_sampler_survives_a_missing_memorysampler(self):
+        """An older distributed must degrade, not break the benchmark."""
+        import builtins
+
+        from dask_setup.benchmark import _sample_peak_memory
+
+        real_import = builtins.__import__
+
+        def no_sampler(name, *a, **k):
+            if name == "distributed.diagnostics":
+                raise ImportError("no MemorySampler here")
+            return real_import(name, *a, **k)
+
+        with (
+            patch.object(builtins, "__import__", side_effect=no_sampler),
+            _sample_peak_memory(MagicMock()) as sampled,
+        ):
+            pass
+
+        assert sampled["sampled"] is False
+        assert sampled["peak_gib"] == 0.0

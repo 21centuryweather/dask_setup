@@ -6,10 +6,57 @@ import pytest
 from dask.distributed import Client
 
 from dask_setup.dashboard import (
+    LOGIN_HOST_ENV,
     format_dashboard_message,
     get_dashboard_info,
+    get_login_host,
     print_dashboard_info,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_login_host(monkeypatch):
+    """Pin the tunnel host so message assertions are machine-independent.
+
+    The hint used to hardcode "gadi.nci.org.au"; it is now inferred from the
+    node's DNS domain, or taken from $DASK_SETUP_LOGIN_HOST.  Pinning the
+    override keeps the existing expectations meaningful and exercises the
+    override path.  get_login_host()'s own inference is covered separately.
+    """
+    monkeypatch.setenv(LOGIN_HOST_ENV, "gadi.nci.org.au")
+
+
+class TestGetLoginHost:
+    """The SSH tunnel hint must name a host that exists at the user's site."""
+
+    @pytest.mark.unit
+    def test_env_override_wins(self, monkeypatch):
+        monkeypatch.setenv(LOGIN_HOST_ENV, "login.mycluster.edu")
+        assert get_login_host() == "login.mycluster.edu"
+
+    @pytest.mark.unit
+    def test_infers_domain_from_fqdn(self, monkeypatch):
+        monkeypatch.delenv(LOGIN_HOST_ENV, raising=False)
+        monkeypatch.setattr(
+            "dask_setup.dashboard.socket.getfqdn",
+            lambda: "gadi-cpu-clx-1234.gadi.nci.org.au",
+        )
+        assert get_login_host() == "gadi.nci.org.au"
+
+    @pytest.mark.unit
+    def test_infers_domain_for_non_nci_sites(self, monkeypatch):
+        monkeypatch.delenv(LOGIN_HOST_ENV, raising=False)
+        monkeypatch.setattr(
+            "dask_setup.dashboard.socket.getfqdn", lambda: "node017.hpc.example.org"
+        )
+        assert get_login_host() == "hpc.example.org"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("fqdn", ["laptop", "laptop.local", "box.localdomain"])
+    def test_placeholder_when_no_usable_domain(self, monkeypatch, fqdn):
+        monkeypatch.delenv(LOGIN_HOST_ENV, raising=False)
+        monkeypatch.setattr("dask_setup.dashboard.socket.getfqdn", lambda: fqdn)
+        assert get_login_host() == "<login-node>"
 
 
 class TestGetDashboardInfo:

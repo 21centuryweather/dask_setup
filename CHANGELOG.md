@@ -7,6 +7,155 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-27
+
+Correctness release. Most of these are settings that were accepted, validated
+and then silently discarded — the library reported doing one thing and did
+another. Several fixes therefore *change behaviour*; they are listed separately
+below.
+
+### Fixed
+
+#### Configuration reaching the cluster
+
+- **Explicit arguments to `setup_dask_client()` were discarded when they equalled
+  a default.** Whether an argument had been supplied was decided by comparing it
+  against the default value, so `workload_type="io"`, `dashboard=True` or
+  `reserve_mem_gb=50.0` were indistinguishable from "not supplied" and were
+  dropped in favour of the profile. Every configuration parameter now defaults
+  to `None` as a real sentinel, and `DaskSetupConfig.merge_overrides()` applies
+  only the keys the caller actually named.
+- **`profile=` and `config=` never reached the PBS, SLURM or interactive
+  backends.** Those modes returned before configuration was resolved.
+- **`setup_dask_client(ds=...)` raised `ValueError: not enough values to unpack`
+  on the multi-node paths**, which returned a 3-tuple even when a dataset was
+  supplied. All modes now return a 4-tuple with `ds=` and a 3-tuple without.
+- **`get_profile()` checked builtins before user profiles**, so
+  `dask-setup show <name>` displayed your profile while
+  `setup_dask_client(profile=<name>)` used the builtin. Both now resolve
+  user → site → builtin.
+- **`MultiNodeConfig` overrides dropped `env_extra` and `scheduler_options`**,
+  because they round-tripped through `to_dict()`, which omits both. `module
+  load` lines vanished from generated worker job scripts.
+
+#### Memory and cluster sizing
+
+- **Multi-node jobs under-provisioned workers by a factor of `processes`.**
+  `cores` and `memory` are per-*job* in `dask-jobqueue`, which divides both by
+  `processes`; the per-worker figures were being passed instead. A 4×12-core,
+  4×32 GiB job started workers with `--nthreads 3 --memory-limit 7.45GiB`
+  rather than `--nthreads 12 --memory-limit 29.80GiB`, against the
+  `ncpus=48,mem=128GB` it had reserved.
+- **`reserve_mem_gb` was defeated by the per-worker memory floor.** The 1 GiB
+  minimum was applied after the split, so 64 workers on a 64 GiB node with a
+  50 GiB reserve each got 1 GiB — 64 GiB committed against 14 GiB usable. The
+  worker count is now fitted to memory first, and the reduction is logged.
+- **`tune_memory_thresholds()` had no effect on running workers.** It wrote
+  `dask.config`, but `WorkerMemoryManager` reads the thresholds once at
+  construction and sizes the `SpillBuffer`'s eviction threshold from them at the
+  same moment. Thresholds are now applied to the live manager and buffer.
+- **Spill volume always read `0.0`.** The worker metric keys queried
+  (`spilled_memory`, `spill`) are not published by current `distributed`; the
+  key is `spilled_bytes`, whose value is a `{"memory", "disk"}` mapping. This
+  also meant `tune_memory_thresholds(strategy="auto")` could never reach its
+  `loosen` branch.
+- **`SLURM_MEM_PER_NODE=0`** — SLURM's encoding for "no memory limit requested"
+  — parsed to a literal zero-byte budget *and* suppressed the psutil fallback,
+  which was guarded on `is None`. Same bug on the PBS path. Non-positive core
+  counts are likewise rejected so detection falls through instead of producing
+  an unusable spec.
+
+#### Hangs, crashes and dead code
+
+- **`recommend_chunks()` could loop forever** on a `mixed` workload when every
+  spatial dimension was already at a chunk size of 1: the reduction step chose
+  from unfiltered candidates and `max(1, 1 // 2) == 1` never made progress.
+- **Circular profile inheritance recursed until `RecursionError`**, producing a
+  57 KB error message. The chain was threaded into `load_profile_from_file` but
+  parents resolved via `get_profile`, which restarted it empty, leaving both the
+  cycle check and the depth cap dead. Cycles now raise
+  `InvalidConfigurationError: Circular profile inheritance detected: a -> b -> a`.
+- **`configure_logging()` was a no-op after import**, so there was no way to
+  enable debug logging: it returned early if logging was already configured, and
+  importing any `dask_setup` module configures it. The documented
+  `DASK_SETUP_LOG_LEVEL`, `DASK_SETUP_LOG_FORMAT` and `DASK_SETUP_LOG_COLOR`
+  variables were never read by anything.
+- **`ErrorContext` crashed while building an error report** if zarr or netCDF4
+  were installed but broken — only `ImportError` was caught, and a missing
+  shared library raises `OSError`.
+- **`create_dask_temp_dir()` nested on repeat calls** (`dask-<pid>/dask-<pid>`)
+  because it overwrote `TMPDIR` with its own result and read it back next time.
+
+#### Benchmarking
+
+- **`scaling_analysis()` swept a topology that cannot scale.** The default
+  config left `workload_type="io"`, for which `decide_topology()` pins
+  `n_workers=1` regardless of `max_workers` — so every point built the same
+  one-worker cluster and the "scaling curve" was timing noise. The default is
+  now `"cpu"`, and a sweep whose worker count never changes logs a warning.
+- **Parallel efficiency divided by the absolute worker count** rather than the
+  worker ratio, so a perfectly scaling `(4, 8)` sweep scored `0.25` at its own
+  baseline instead of `1.0`.
+- **`peak_memory_gib` was not a peak.** It came from a cluster report taken
+  after `.compute()` returned, by which point the workers had released the data.
+  Memory is now sampled every 0.2 s during the timed runs.
+
+#### Smaller fixes
+
+- Generated job scripts quote interpolated paths (`shlex.quote`), so a
+  `shared_tmp_dir` or script path containing a space no longer breaks the script.
+- `dask-setup create-profile --from-profile` copied by reference and renamed the
+  source profile in place — for a builtin, for the rest of the process.
+- Dimension classification no longer matches `"x"`, `"y"`, `"z"`, `"ni"`, `"nj"`
+  and `"lev"` as substrings, which made `proxy`, `flux`, `max` and `zone` spatial
+  dimensions and let them drive chunk sizing.
+- The dashboard SSH tunnel hint no longer hardcodes `gadi.nci.org.au`; it is
+  inferred from the node's DNS domain and can be set with `$DASK_SETUP_LOGIN_HOST`.
+- `_rechunk_native()` no longer claims memory safety it cannot provide, and warns
+  when a rechunk enlarges chunks (the unbounded case).
+- PBS cluster construction no longer emits a `FutureWarning` on every launch
+  (`project` → `account`, `env_extra` → `job_script_prologue`).
+
+### Changed
+
+These change observable behaviour. Explicit settings you already pass still win
+in every case.
+
+- **`reserve_mem_gb` now defaults to 20% of RAM**, clamped to [4, 50] GiB, capped
+  at half the machine with a 1 GiB floor. The machine-aware default was written
+  in v1.1 but never called, so every host got a flat 50 GiB — which on a 16 GiB
+  laptop reserves more than the whole machine.
+- **`silence_logs=False` (the default) now leaves Dask at its own `WARNING`
+  level** instead of `ERROR`. The setting was collected and validated but never
+  passed to `create_cluster`, so worker warnings — memory pressure, paused
+  workers — were always suppressed.
+- **`env_extra` lines are emitted verbatim** in generated job scripts, matching
+  how `dask-jobqueue` treats them. They used to be prefixed with `export`, which
+  turned `module load conda` into `export module load conda` on that path while
+  the `dask-jobqueue` path ran it correctly. **If you relied on the implicit
+  prefix for bare `FOO=bar` entries, add `export` yourself.**
+- **A user profile now shadows a builtin of the same name** in `get_profile()`,
+  matching what `list_profiles()` and `dask-setup list` already displayed.
+- **PBS/SLURM modes warn about settings the backend cannot apply**
+  (`reserve_mem_gb`, spill compression, …) instead of dropping them silently.
+
+### Documentation
+
+- Corrected the claim that `profile=` and `config=` compose. They occupy the
+  same precedence layer: whichever is passed supplies the base, and if both are
+  passed the profile wins outright. Layering them would require knowing which
+  fields a profile's YAML actually set, which `ConfigProfile` does not record.
+- README and wiki updated for every behaviour change above; added documentation
+  for log configuration, `env_extra` semantics and the per-job resource model.
+
+### Internal
+
+- 100 new tests (946 total, up from 784), including new suites for `reporting`,
+  `tune`, `logging` and `rechunk`, which had none.
+- Release workflow now runs the test matrix, verifies the tag matches
+  `pyproject.toml`, runs `twine check --strict`, and creates a GitHub Release
+  before publishing to PyPI — all triggered by pushing a `v*` tag.
+
 ## [2.0.0] - 2026-03-23
 
 ### Added

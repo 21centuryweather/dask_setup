@@ -587,3 +587,65 @@ class TestTempDirIntegration:
             assert env_after_first == env_after_second
 
             cleanup_temp_dir(temp_dir1, force=True)
+
+
+class TestTempDirDoesNotNest:
+    """create_dask_temp_dir set TMPDIR to its own result, then read it back.
+
+    A second call in the same process therefore produced
+    ``.../dask-<pid>/dask-<pid>``, a third nested again, and so on -- which bit
+    notebooks and the benchmark sweep, both of which set up more than once.
+    """
+
+    @pytest.mark.unit
+    def test_repeat_calls_return_the_same_path(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("PBS_JOBFS", raising=False)
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+        first = create_dask_temp_dir()
+        second = create_dask_temp_dir()
+        third = create_dask_temp_dir()
+
+        assert first == second == third
+        assert first.parent == tmp_path
+
+    @pytest.mark.unit
+    def test_no_nested_dask_components(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("PBS_JOBFS", raising=False)
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+        for _ in range(5):
+            result = create_dask_temp_dir()
+
+        assert str(result).count("dask-") == 1
+
+    @pytest.mark.unit
+    def test_recovers_from_an_inherited_nested_tmpdir(self, tmp_path, monkeypatch):
+        """A job script that exports a stale nested TMPDIR must not deepen it."""
+        monkeypatch.delenv("PBS_JOBFS", raising=False)
+        monkeypatch.setenv("TMPDIR", str(tmp_path / "dask-999" / "dask-888"))
+
+        result = create_dask_temp_dir()
+
+        assert result.parent == tmp_path
+
+    @pytest.mark.unit
+    def test_pbs_jobfs_still_wins_over_a_rewritten_tmpdir(self, tmp_path, monkeypatch):
+        jobfs = tmp_path / "jobfs"
+        jobfs.mkdir()
+        monkeypatch.setenv("PBS_JOBFS", str(jobfs))
+        monkeypatch.setenv("TMPDIR", str(tmp_path / "other"))
+
+        first = create_dask_temp_dir()
+        second = create_dask_temp_dir()
+
+        assert first == second
+        assert first.parent == jobfs
+
+    @pytest.mark.unit
+    def test_explicit_base_is_guarded_too(self, tmp_path):
+        """Passing back a previous return value must not nest either."""
+        first = create_dask_temp_dir(base_dir=str(tmp_path))
+        second = create_dask_temp_dir(base_dir=str(first))
+
+        assert first == second

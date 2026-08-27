@@ -432,3 +432,64 @@ class TestIntegration:
         summary = context.get_environment_summary()
         lines = summary.split("\n")
         assert len(lines) >= 4  # At minimum: env, python, memory, cpu
+
+
+class TestDependencyProbeSurvivesBrokenInstalls:
+    """ErrorContext imports zarr and netCDF4 while building an error report.
+
+    Only ImportError was caught, but importing netCDF4 runs real code: a
+    missing shared library raises OSError and an ABI mismatch raises
+    ValueError.  Either replaced the user's actual problem with an unrelated
+    traceback, at the exact moment they were trying to find out what broke.
+    """
+
+    @staticmethod
+    def _with_failing_import(exc):
+        import builtins
+
+        real = builtins.__import__
+
+        def failing(name, *args, **kwargs):
+            if name == "netCDF4":
+                raise exc
+            return real(name, *args, **kwargs)
+
+        return patch.object(builtins, "__import__", side_effect=failing)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            OSError("dlopen(libnetcdf.so): image not found"),
+            ValueError("numpy.dtype size changed, may indicate binary incompatibility"),
+            RuntimeError("module compiled against a different API version"),
+        ],
+    )
+    def test_context_still_builds(self, exc):
+        from dask_setup.error_handling import ErrorContext
+
+        with self._with_failing_import(exc):
+            context = ErrorContext()
+
+        assert context.available_dependencies["netcdf4"].startswith("import failed:")
+
+    @pytest.mark.unit
+    def test_the_summary_is_still_renderable(self):
+        from dask_setup.error_handling import ErrorContext
+
+        with self._with_failing_import(OSError("broken")):
+            context = ErrorContext()
+
+        summary = context.get_environment_summary()
+        assert "netcdf4" in summary
+        assert "import failed: OSError" in summary
+
+    @pytest.mark.unit
+    def test_a_plain_missing_package_is_simply_absent(self):
+        """ImportError must stay silent rather than reporting a failure."""
+        from dask_setup.error_handling import ErrorContext
+
+        with self._with_failing_import(ImportError("No module named 'netCDF4'")):
+            context = ErrorContext()
+
+        assert "netcdf4" not in context.available_dependencies

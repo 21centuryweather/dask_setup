@@ -208,6 +208,20 @@ def _parse_pbs_mem_bytes(mem_str: str | None) -> int | None:
     return _parse_mem_bytes(stripped)
 
 
+def _positive_or_none(value: int | None) -> int | None:
+    """Normalise a parsed byte count, mapping non-positive values to ``None``.
+
+    Schedulers use ``0`` to mean *no limit configured*, not *no memory*.
+    ``SLURM_MEM_PER_NODE=0`` is the common case: it is what SLURM exports when
+    a job requests no explicit memory.  Parsing it to a literal ``0`` made the
+    detected budget zero bytes and, worse, suppressed the psutil fallback,
+    because the fallback was guarded on ``is None``.
+    """
+    if value is None or value <= 0:
+        return None
+    return value
+
+
 def _detect_slurm_resources() -> ResourceSpec | None:
     """Detect resources from SLURM environment variables.
 
@@ -227,27 +241,32 @@ def _detect_slurm_resources() -> ResourceSpec | None:
         logger.debug(f"Invalid SLURM_CPUS_ON_NODE value: '{slurm_cpus}'")
         return None
 
+    if total_cores <= 0:
+        logger.debug(f"Non-positive SLURM_CPUS_ON_NODE value: '{slurm_cpus}'")
+        return None
+
     # Try total memory first, then per-CPU memory using improved parser
     total_mem_bytes = None
 
     if slurm_mem_total:
         # Try parsing with improved parser first
-        total_mem_bytes = _parse_mem_bytes(slurm_mem_total)
+        total_mem_bytes = _positive_or_none(_parse_mem_bytes(slurm_mem_total))
         if total_mem_bytes is None and slurm_mem_total.isdigit():
             # Fallback to old logic for pure digits (SLURM MB format)
-            total_mem_bytes = int(slurm_mem_total) * 1024 * 1024  # MB to bytes
+            total_mem_bytes = _positive_or_none(int(slurm_mem_total) * 1024 * 1024)
 
     if total_mem_bytes is None and slurm_mem_per_cpu:
         # Try parsing per-CPU memory with improved parser
-        per_cpu_bytes = _parse_mem_bytes(slurm_mem_per_cpu)
+        per_cpu_bytes = _positive_or_none(_parse_mem_bytes(slurm_mem_per_cpu))
         if per_cpu_bytes is not None:
             total_mem_bytes = per_cpu_bytes * total_cores
         elif slurm_mem_per_cpu.isdigit():
             # Fallback to old logic for pure digits (SLURM MB format)
-            total_mem_bytes = int(slurm_mem_per_cpu) * total_cores * 1024 * 1024  # MB to bytes
+            total_mem_bytes = _positive_or_none(int(slurm_mem_per_cpu) * total_cores * 1024 * 1024)
 
     if total_mem_bytes is None:
         # Fall back to psutil for memory if SLURM memory info is unavailable
+        # or reported as unlimited (0).
         logger.debug("SLURM memory detection failed, falling back to psutil")
         total_mem_bytes = psutil.virtual_memory().total
 
@@ -273,7 +292,11 @@ def _detect_pbs_resources() -> ResourceSpec | None:
     except ValueError:
         return None
 
-    total_mem_bytes = _parse_pbs_mem_bytes(pbs_mem)
+    if total_cores <= 0:
+        logger.debug(f"Non-positive PBS core count: '{pbs_ncpus}'")
+        return None
+
+    total_mem_bytes = _positive_or_none(_parse_pbs_mem_bytes(pbs_mem))
     if total_mem_bytes is None:
         # Fall back to psutil for memory if PBS memory info is unavailable
         total_mem_bytes = psutil.virtual_memory().total

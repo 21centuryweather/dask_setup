@@ -74,13 +74,26 @@ client, cluster, shared_tmp = setup_dask_client(
 |-----------|---------|-------------|
 | `workload_type` | `"io"` | Worker topology: `"cpu"`, `"io"`, `"mixed"`, `"gpu"`, `"auto"` |
 | `max_workers` | all cores | Hard cap on worker count |
-| `reserve_mem_gb` | auto (20% RAM) | Memory held back for OS/cache (GiB) |
+| `reserve_mem_gb` | auto | Memory held back for OS/cache (GiB): 20% of RAM, clamped to [4, 50] |
 | `max_mem_gb` | total RAM | Upper bound on Dask's total memory use |
 | `dashboard` | `True` | Start dashboard and print SSH tunnel hint |
 | `profile` | `None` | Named config profile |
-| `config` | `None` | Pre-built `DaskSetupConfig` object — mutually exclusive with `profile` |
+| `config` | `None` | Pre-built `DaskSetupConfig` object — same layer as `profile`; if both are given, `profile` wins |
 | `mode` | `"auto"` | `"local"`, `"pbs"`, `"slurm"`, or `"auto"` (v2.0) |
 | `multi_node_config` | `None` | `MultiNodeConfig` for PBS/SLURM multi-node jobs (v2.0) |
+
+Settings are layered, lowest to highest:
+
+```
+library defaults  <  config= or profile=  <  explicit keyword arguments
+```
+
+A parameter you leave unset inherits from the layer below. Passing a value
+always overrides, even when that value happens to equal the default — so
+`reserve_mem_gb=50.0` overrides a profile that says 40.0.
+
+`config=` and `profile=` share a layer rather than stacking: pass one or the
+other, and use explicit keyword arguments for the differences.
 
 ---
 
@@ -154,6 +167,14 @@ Dask dashboard: http://127.0.0.1:<PORT>/status
 Tunnel from your laptop:
   ssh -N -L 8787:<COMPUTE_HOST>:<PORT> gadi.nci.org.au
 Then open: http://localhost:8787
+```
+
+The login host is inferred from the compute node's DNS domain, so it is correct
+at other sites too. Override it with `$DASK_SETUP_LOGIN_HOST` if the guess is
+wrong:
+
+```bash
+export DASK_SETUP_LOGIN_HOST=login.mycluster.edu
 ```
 
 ---

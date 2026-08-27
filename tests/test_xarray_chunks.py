@@ -1387,3 +1387,131 @@ class TestValidateChunks:
             warnings_list = validate_chunks(ds_chunked)
 
         assert warnings_list == []
+
+
+class TestChunkReductionTerminates:
+    """The chunk-size reduction loops must always terminate.
+
+    Regression guard: the "mixed" branch selected its candidate dimensions
+    without filtering for dims that could still be halved. Once every spatial
+    dim sat at 1, ``max(1, 1 // 2)`` left the estimate unchanged and the loop
+    span forever — reachable from ``setup_dask_client(ds=..., workload_type="mixed")``.
+    """
+
+    @staticmethod
+    def _dataset_info(dims: dict[str, int], dtype: str = "float64"):
+        import numpy as np
+
+        shape = tuple(dims.values())
+        itemsize = np.dtype(dtype).itemsize
+        size_bytes = int(np.prod(shape, dtype="int64")) * itemsize
+        return {
+            "dims": dims,
+            "current_chunking": {},
+            "variables": {
+                "v": {
+                    "dtype": dtype,
+                    "shape": shape,
+                    "dims": list(dims),
+                    "size_bytes": size_bytes,
+                    "current_chunks": None,
+                }
+            },
+            "total_uncompressed_bytes": size_bytes,
+            "is_currently_chunked": False,
+        }
+
+    @staticmethod
+    def _cluster_info():
+        return {
+            "n_workers": 4,
+            "threads_per_worker": 1,
+            "memory_limit_bytes": 4 * 1024**3,
+            "total_memory_bytes": 16 * 1024**3,
+        }
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("workload_type", ["mixed", "cpu", "io"])
+    @pytest.mark.parametrize(
+        ("dims", "label"),
+        [
+            ({"lat": 1, "lon": 1, "time": 90_000_000}, "minimal-spatial-huge-time"),
+            ({"lat": 2, "lon": 2, "ensemble": 200_000_000}, "minimal-spatial-huge-other"),
+            ({"lat": 1, "lon": 1}, "everything-minimal"),
+        ],
+    )
+    def test_reduction_terminates_on_minimal_spatial_dims(self, workload_type, dims, label):
+        """Shapes whose spatial dims cannot be reduced further must still return."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        # A hang here shows up as the test session never finishing, so also
+        # assert the result is sane rather than merely reachable.
+        result = _calculate_optimal_chunks(
+            self._dataset_info(dims),
+            self._cluster_info(),
+            workload_type=workload_type,
+        )
+
+        assert result.total_chunks >= 1
+        for dim, size in result.chunks.items():
+            assert size == -1 or 1 <= size <= dims[dim]
+
+    @pytest.mark.unit
+    def test_mixed_reduces_a_non_spatial_dim_when_spatial_are_exhausted(self):
+        """Once spatial dims bottom out, reduction must fall through to the rest."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        dims = {"lat": 2, "lon": 2, "ensemble": 200_000_000}
+        result = _calculate_optimal_chunks(
+            self._dataset_info(dims), self._cluster_info(), workload_type="mixed"
+        )
+
+        # 'ensemble' is neither spatial nor temporal; it is the only dim with
+        # room left, so it must have been chunked down.
+        assert result.chunks["ensemble"] < dims["ensemble"]
+        assert result.estimated_chunk_mb <= 512
+
+
+class TestShortDimensionNamesAreNotSubstrings:
+    """ "x", "y" and "z" were matched by substring against dimension names.
+
+    That made "proxy", "flux", "max" and "zone" spatial dimensions, which then
+    drove chunk sizing for axes that have nothing to do with space.
+    """
+
+    @staticmethod
+    def _classify(*names):
+        from dask_setup.xarray import _classify_dimensions
+
+        return _classify_dimensions(dict.fromkeys(names, 10))
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("dim", ["x", "y", "z", "X", "Y", "Z"])
+    def test_bare_axis_names_are_spatial(self, dim):
+        assert self._classify(dim)["spatial"] == [dim]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("dim", ["nx", "ny", "nz", "x1", "y_2", "ni", "nj", "lev", "lev1"])
+    def test_conventional_variants_are_spatial(self, dim):
+        assert self._classify(dim)["spatial"] == [dim]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "dim", ["proxy", "flux", "max", "zone", "size", "index", "mixture", "analysis"]
+    )
+    def test_words_merely_containing_an_axis_letter_are_not_spatial(self, dim):
+        result = self._classify(dim)
+        assert result["spatial"] == []
+        assert result["other"] == [dim]
+
+    @pytest.mark.unit
+    def test_long_spatial_names_still_match_as_substrings(self):
+        result = self._classify("latitude_1", "nlon", "model_depth", "pressure_level")
+        assert result["spatial"] == ["latitude_1", "nlon", "model_depth", "pressure_level"]
+
+    @pytest.mark.unit
+    def test_a_realistic_mixed_dataset(self):
+        result = self._classify("time", "lat", "lon", "flux", "ensemble", "z")
+        assert result["temporal"] == ["time"]
+        assert result["spatial"] == ["lat", "lon", "z"]
+        assert result["other"] == ["flux", "ensemble"]

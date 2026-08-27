@@ -1,54 +1,224 @@
-name: Publish Python 🐍 distribution 📦 to PyPI
+name: Release
 
-on: 
-  release:
-    types: [published]
+# Push a version tag and everything else happens automatically:
+#
+#     git tag -a v2.2.0 -m "v2.2.0" && git push origin v2.2.0
+#
+#   1. test          — the full CI matrix must pass first
+#   2. build         — verify the tag matches pyproject.toml, build, twine check
+#   3. github-release — create the GitHub Release with the dists attached
+#   4. publish-to-pypi — upload to PyPI via trusted publishing
+#
+# Every step gates the next, because a PyPI upload cannot be undone: a version
+# number is claimed forever, even if you yank it.
+
+on:
+  push:
+    tags:
+      # Matches v2.1.0, v2.1.0rc1, v2.1.0.post1 — not arbitrary tags.
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    # Lets you re-run a release for an existing tag (select it as the ref).
+
+# Read-only by default; the two jobs that need more ask for it themselves.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  # --------------------------------------------------------------------------
+  # 1. Nothing ships unless the test suite passes on every supported Python.
+  # --------------------------------------------------------------------------
+  test:
+    name: Test before release
+    uses: ./.github/workflows/ci.yml
+
+  # --------------------------------------------------------------------------
+  # 2. Build, and refuse to go further if the tag and the package disagree.
+  # --------------------------------------------------------------------------
   build:
     name: Build distribution 📦
+    needs: [test]
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        persist-credentials: false
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.x"
-    - name: Install pypa/build
-      run: >-
-        python3 -m
-        pip install
-        build
-        --user
-    - name: Build a binary wheel and a source tarball
-      run: python3 -m build
-    - name: Store the distribution packages
-      uses: actions/upload-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
 
+      - name: Fail early if this is not a tag
+        run: |
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "::error::This workflow must run from a tag, got ref ${GITHUB_REF}."
+            echo "Re-run it with a tag selected as the ref, or push a v* tag."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches the version in pyproject.toml
+        id: version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          tag_version="${tag#v}"
+          project_version="$(python -c '
+          import pathlib, tomllib
+          print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])
+          ')"
+
+          echo "tag=${tag}"                       >> "$GITHUB_OUTPUT"
+          echo "version=${project_version}"       >> "$GITHUB_OUTPUT"
+
+          if [ "${tag_version}" != "${project_version}" ]; then
+            echo "::error::Tag ${tag} does not match pyproject.toml version ${project_version}."
+            echo "Bump 'version' in pyproject.toml, or delete and re-push the tag."
+            echo "Publishing anyway would upload ${project_version} under a ${tag} release, or"
+            echo "fail against PyPI because ${project_version} already exists."
+            exit 1
+          fi
+
+          # Anything that is not a bare X.Y.Z is a pre-release.
+          if [[ "${tag_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true"  >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build a binary wheel and a source tarball
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check the built distributions
+        # A README that PyPI cannot render is as permanent as a bad upload.
+        run: python -m twine check --strict dist/*
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          set -euo pipefail
+          python - "${{ steps.version.outputs.version }}" > release-notes.md <<'PY'
+          import pathlib, re, sys
+
+          version = sys.argv[1]
+          changelog = pathlib.Path("CHANGELOG.md")
+          if not changelog.exists():
+              sys.exit(0)
+
+          # Keep a Changelog layout: "## [2.1.0] - 2026-08-27" up to the next "## [".
+          match = re.search(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)",
+              changelog.read_text(),
+              re.MULTILINE | re.DOTALL,
+          )
+          if match:
+              print(match.group(1).strip())
+          PY
+
+          if [ -s release-notes.md ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No CHANGELOG.md section for ${{ steps.version.outputs.version }} - using auto-generated notes."
+          fi
+
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Store the release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      notes-found: ${{ steps.notes.outputs.found }}
+
+  # --------------------------------------------------------------------------
+  # 3. Publish the GitHub Release, with the same artifacts that go to PyPI.
+  # --------------------------------------------------------------------------
+  github-release:
+    name: Publish GitHub release 🏷️
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to create a release
+
+    steps:
+      - name: Download the dists
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Download the release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          NOTES_FOUND: ${{ needs.build.outputs.notes-found }}
+        run: |
+          set -euo pipefail
+
+          args=(--title "$TAG" --verify-tag)
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+
+          if [ "$NOTES_FOUND" = "true" ]; then
+            args+=(--notes-file release-notes.md)
+          else
+            args+=(--generate-notes)
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Re-running a release for an existing tag: replace the assets
+            # rather than failing, so a half-finished run can be recovered.
+            echo "Release $TAG already exists — updating it."
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* "${args[@]}"
+          fi
+
+  # --------------------------------------------------------------------------
+  # 4. Only now does anything become permanent.
+  # --------------------------------------------------------------------------
   publish-to-pypi:
-    name: >-
-      Publish Python 🐍 distribution 📦 to PyPI
-    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
-    needs:
-    - build
+    name: Publish 📦 to PyPI
+    needs: [build, github-release]
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/dask_setup  # Replace <package-name> with your PyPI project name
+      url: https://pypi.org/p/dask_setup
     permissions:
       id-token: write  # IMPORTANT: mandatory for trusted publishing
 
     steps:
-    - name: Download all the dists
-      uses: actions/download-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
-    - name: Publish distribution 📦 to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Download all the dists
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish distribution 📦 to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

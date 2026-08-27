@@ -20,6 +20,8 @@ import dask
 import psutil
 from dask.distributed import Client, LocalCluster
 
+from .dashboard import get_login_host
+
 
 def setup_dask_client(
     workload_type: str = "io",  # "cpu", "io", or "mixed"
@@ -178,7 +180,7 @@ def setup_dask_client(
         print(
             f"Dask dashboard: {link}\n"
             f"Tunnel from your laptop (run locally):\n"
-            f"  ssh -N -L 8787:{host}:{port} gadi.nci.org.au\n"
+            f"  ssh -N -L 8787:{host}:{port} {get_login_host()}\n"
             f"Then open: http://localhost:8787\n"
         )
 
