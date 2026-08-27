@@ -1515,3 +1515,69 @@ class TestShortDimensionNamesAreNotSubstrings:
         assert result["temporal"] == ["time"]
         assert result["spatial"] == ["lat", "lon", "z"]
         assert result["other"] == ["flux", "ensemble"]
+
+
+class TestDetectStorageFormat:
+    """NetCDF-backed datasets must be distinguishable from Zarr-backed ones.
+
+    The two have opposite threading characteristics: HDF5 is usually not built
+    thread-safe so xarray serialises every NetCDF read through one global lock,
+    while Zarr decompresses via numcodecs, which releases the GIL.  Telling them
+    apart is what lets setup_dask_client warn about workload_type="io".
+    """
+
+    @staticmethod
+    def _ds(source=None, var_source=None):
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+        ds = xr.Dataset({"t2m": (("x",), np.zeros(4))})
+        if source is not None:
+            ds.encoding["source"] = source
+        if var_source is not None:
+            ds["t2m"].encoding["source"] = var_source
+        return ds
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "path", ["/g/data/x/f.nc", "/d/f.nc4", "/d/f.cdf", "/d/f.h5", "/d/f.hdf5", "/D/F.NC"]
+    )
+    def test_netcdf_suffixes(self, path):
+        from dask_setup.xarray import detect_storage_format
+
+        assert detect_storage_format(self._ds(source=path)) == "netcdf"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("path", ["/scratch/era5.zarr", "/scratch/era5.zarr/", "/s/x.ZARR"])
+    def test_zarr_suffixes(self, path):
+        from dask_setup.xarray import detect_storage_format
+
+        assert detect_storage_format(self._ds(source=path)) == "zarr"
+
+    @pytest.mark.unit
+    def test_open_mfdataset_shape_is_detected(self):
+        """open_mfdataset leaves the dataset-level source unset.
+
+        Only the per-variable encodings keep the paths, so a check that looked
+        at ds.encoding alone would miss the multi-file case entirely -- which is
+        exactly the case that motivates the warning.
+        """
+        from dask_setup.xarray import detect_storage_format
+
+        ds = self._ds(source=None, var_source="/g/data/day00.nc")
+        assert ds.encoding.get("source") is None
+        assert detect_storage_format(ds) == "netcdf"
+
+    @pytest.mark.unit
+    def test_unknown_source_returns_none(self):
+        """None means 'no opinion', not 'not NetCDF' -- callers must not warn."""
+        from dask_setup.xarray import detect_storage_format
+
+        assert detect_storage_format(self._ds()) is None
+        assert detect_storage_format(self._ds(source="http://server/opendap/x")) is None
+
+    @pytest.mark.unit
+    def test_a_non_dataset_object_does_not_raise(self):
+        from dask_setup.xarray import detect_storage_format
+
+        assert detect_storage_format(object()) is None
+        assert detect_storage_format(None) is None

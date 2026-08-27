@@ -82,6 +82,43 @@ def _compute_smart_reserve_default() -> float:
         return 50.0  # Safe HPC fallback if psutil is unexpectedly unavailable
 
 
+def _warn_if_threaded_topology_reads_netcdf(ds: Any, workload_type: str) -> bool:
+    """Warn when ``workload_type="io"`` is paired with NetCDF/HDF5 input.
+
+    ``"io"`` runs one process with many threads, which only pays off when the
+    reading library releases the GIL.  HDF5 -- underneath NetCDF4 -- is usually
+    not built thread-safe, so xarray funnels every read through a single
+    process-wide lock: the threads queue on it instead of reading in parallel,
+    and decompression is serialised inside it too.  ``"cpu"`` gives each process
+    its own lock and is typically far faster on the same data.
+
+    Returns ``True`` if a warning was emitted, so callers and tests can tell.
+    """
+    if workload_type != "io":
+        return False
+
+    try:
+        from .xarray import detect_storage_format
+
+        storage = detect_storage_format(ds)
+    except Exception as e:  # pragma: no cover - never block setup on a hint
+        logger.debug("Could not determine dataset storage format", error=str(e))
+        return False
+
+    if storage != "netcdf":
+        return False
+
+    logger.warning(
+        "workload_type='io' is usually the wrong choice for NetCDF/HDF5 input",
+        reason="HDF5 is not thread-safe, so xarray serialises every read through "
+        "one process-wide lock; the threads queue rather than read in parallel",
+        suggestion="use workload_type='cpu' (one lock per process) for NetCDF",
+        note="also avoid open_mfdataset(..., parallel=True) with 'io' -- concurrent "
+        "metadata reads can kill the worker and Dask's silent retries look like a hang",
+    )
+    return True
+
+
 def _chunk_recommendations_for(
     ds: Any,
     client: Client,
@@ -697,6 +734,7 @@ def setup_dask_client(
         # Chunk recommendations need a live client, which we now have — so
         # the ds= contract (4-tuple) holds on these paths too.
         if ds is not None:
+            _warn_if_threaded_topology_reads_netcdf(ds, mn_resolved.workload_type)
             chunks = _chunk_recommendations_for(
                 ds, client, mn_resolved.workload_type, mn_resolved.suggest_chunks
             )
@@ -931,6 +969,7 @@ def setup_dask_client(
     chunk_recommendations: dict[str, int] | None = None
 
     if ds is not None:
+        _warn_if_threaded_topology_reads_netcdf(ds, config.workload_type)
         chunk_recommendations = _chunk_recommendations_for(
             ds, client, config.workload_type, config.suggest_chunks
         )

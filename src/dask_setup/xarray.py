@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import re
 import warnings
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -261,6 +262,62 @@ _SPATIAL_SHORT_PATTERNS: tuple[str, ...] = ("x", "y", "z", "ni", "nj", "lev")
 _SPATIAL_SHORT_RE = re.compile(
     r"^(?:n|num|n_)?(?:" + "|".join(_SPATIAL_SHORT_PATTERNS) + r")(?:[_-]?\d+)?$"
 )
+
+
+#: File suffixes whose reads go through the HDF5 C library.  HDF5 is commonly
+#: built without thread safety, so xarray serialises every read through one
+#: process-wide lock -- which makes a threaded ("io") topology actively harmful.
+_NETCDF_SUFFIXES: tuple[str, ...] = (".nc", ".nc4", ".cdf", ".netcdf", ".h5", ".hdf5", ".hdf")
+
+#: Suffixes for stores that decompress via numcodecs, which releases the GIL.
+_ZARR_SUFFIXES: tuple[str, ...] = (".zarr", ".zip")
+
+
+def _source_paths(ds: Any, limit: int = 32) -> list[str]:
+    """Collect the file paths backing *ds*, from dataset and variable encodings.
+
+    ``open_mfdataset`` leaves the dataset-level ``source`` unset -- the paths
+    survive only on the individual variables -- so both levels are checked.
+    """
+    sources: list[str] = []
+
+    def add(obj: Any) -> None:
+        if len(sources) >= limit:
+            return
+        encoding = getattr(obj, "encoding", None)
+        if isinstance(encoding, dict):
+            src = encoding.get("source")
+            if src:
+                sources.append(str(src))
+
+    add(ds)
+    variables = getattr(ds, "variables", None)
+    if isinstance(variables, Mapping):
+        for var in variables.values():
+            add(var)
+    else:
+        add(getattr(ds, "variable", None))
+    return sources
+
+
+def detect_storage_format(ds: Any) -> str | None:
+    """Return ``"netcdf"``, ``"zarr"``, or ``None`` for the files backing *ds*.
+
+    ``None`` means "could not tell" -- an in-memory dataset, an OPeNDAP URL, or
+    a store whose path carries no recognisable suffix.  Callers should treat
+    ``None`` as "no opinion" rather than as a negative result.
+    """
+    try:
+        sources = _source_paths(ds)
+    except Exception:  # pragma: no cover - defensive against odd ds objects
+        return None
+
+    lowered = [s.lower().rstrip("/") for s in sources]
+    if any(s.endswith(_NETCDF_SUFFIXES) for s in lowered):
+        return "netcdf"
+    if any(s.endswith(_ZARR_SUFFIXES) for s in lowered):
+        return "zarr"
+    return None
 
 
 def _classify_dimensions(dims: dict[str, int]) -> dict[str, list[str]]:

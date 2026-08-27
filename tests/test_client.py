@@ -1357,3 +1357,111 @@ class TestSilenceLogsReachesTheCluster:
         quiet = self._create_cluster_kwargs(DaskSetupConfig(silence_logs=True))
         loud = self._create_cluster_kwargs(DaskSetupConfig(silence_logs=False))
         assert quiet["silence_logs"] != loud["silence_logs"]
+
+
+class TestNetcdfWithThreadedTopologyWarning:
+    """workload_type="io" is the wrong choice for NetCDF, and the docs used to
+    recommend it for exactly that ("Opening many NetCDF/Zarr files
+    concurrently"). One process with many threads only helps when the reading
+    library releases the GIL; HDF5 is usually not built thread-safe, so xarray
+    serialises every read through a single process-wide lock.
+    """
+
+    @staticmethod
+    def _ds(source):
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+        ds = xr.Dataset({"t2m": (("x",), np.zeros(4))})
+        ds.encoding["source"] = source
+        return ds
+
+    @pytest.mark.unit
+    def test_warns_for_netcdf_with_io(self):
+        from dask_setup.client import _warn_if_threaded_topology_reads_netcdf
+
+        assert _warn_if_threaded_topology_reads_netcdf(self._ds("/g/f.nc"), "io") is True
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("workload_type", ["cpu", "mixed", "gpu"])
+    def test_silent_for_other_workload_types(self, workload_type):
+        from dask_setup.client import _warn_if_threaded_topology_reads_netcdf
+
+        assert _warn_if_threaded_topology_reads_netcdf(self._ds("/g/f.nc"), workload_type) is False
+
+    @pytest.mark.unit
+    def test_silent_for_zarr_with_io(self):
+        """Zarr is the case "io" is actually for -- it must not be discouraged."""
+        from dask_setup.client import _warn_if_threaded_topology_reads_netcdf
+
+        assert _warn_if_threaded_topology_reads_netcdf(self._ds("/s/era5.zarr"), "io") is False
+
+    @pytest.mark.unit
+    def test_silent_when_the_format_is_unknown(self):
+        """Never warn on a guess -- an in-memory or OPeNDAP dataset says nothing."""
+        xr = pytest.importorskip("xarray")
+        np = pytest.importorskip("numpy")
+        from dask_setup.client import _warn_if_threaded_topology_reads_netcdf
+
+        assert (
+            _warn_if_threaded_topology_reads_netcdf(xr.Dataset({"a": (("x",), np.zeros(2))}), "io")
+            is False
+        )
+
+    @pytest.mark.unit
+    def test_never_blocks_setup_when_detection_raises(self):
+        from dask_setup.client import _warn_if_threaded_topology_reads_netcdf
+
+        with patch("dask_setup.xarray.detect_storage_format", side_effect=RuntimeError("boom")):
+            assert _warn_if_threaded_topology_reads_netcdf(self._ds("/g/f.nc"), "io") is False
+
+    @pytest.mark.unit
+    def test_message_names_the_fix(self, caplog):
+        from dask_setup.client import _warn_if_threaded_topology_reads_netcdf
+
+        with caplog.at_level(logging.WARNING, logger="dask_setup.client"):
+            _warn_if_threaded_topology_reads_netcdf(self._ds("/g/f.nc"), "io")
+
+        record = caplog.records[-1]
+        assert "NetCDF" in record.getMessage()
+        assert "workload_type='cpu'" in record._extra_context["suggestion"]
+
+    @pytest.mark.unit
+    def test_fires_through_setup_dask_client(self, caplog):
+        """End to end: passing ds= on the local path must trigger the warning."""
+        with (
+            patch(
+                "dask_setup.client.detect_resources",
+                return_value=ResourceSpec(8, 32 * 1024**3, "test"),
+            ),
+            patch(
+                "dask_setup.client.decide_topology",
+                return_value=TopologySpec(1, 8, False, "io"),
+            ),
+            patch("dask_setup.client.validate_topology"),
+            patch("dask_setup.client.create_dask_temp_dir", return_value="/tmp/x"),
+            patch("dask_setup.client.compute_usable_mem_gb", return_value=30.0),
+            patch(
+                "dask_setup.client.calculate_memory_spec",
+                return_value=MemorySpec(32.0, 30.0, 30 * 1024**3, 2.0),
+            ),
+            patch("dask_setup.client.create_cluster"),
+            patch("dask_setup.client.Client"),
+            patch("dask_setup.client.print_dashboard_info"),
+            patch("dask_setup.client._chunk_recommendations_for", return_value={}),
+            caplog.at_level(logging.WARNING, logger="dask_setup.client"),
+        ):
+            setup_dask_client(workload_type="io", ds=self._ds("/g/data/day00.nc"))
+
+        assert any("NetCDF" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.unit
+    def test_wired_into_both_ds_paths(self):
+        """Cheap guard that the multi-node ds= path keeps the warning too."""
+        import inspect
+
+        from dask_setup.client import setup_dask_client
+
+        source = inspect.getsource(setup_dask_client)
+        assert source.count("_warn_if_threaded_topology_reads_netcdf") == 2, (
+            "expected the warning on both the local and multi-node ds= paths"
+        )

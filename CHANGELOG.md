@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `setup_dask_client(ds=...)` now warns when `workload_type="io"` is paired with
+  NetCDF/HDF5 input. `"io"` runs one process with many threads, which only helps
+  when the reading library releases the GIL; HDF5 is usually not built
+  thread-safe, so xarray serialises every read through a single process-wide
+  lock and the threads queue instead of reading in parallel. The warning names
+  `"cpu"` as the fix. Zarr input is unaffected — that is what `"io"` is for.
+- `dask_setup.xarray.detect_storage_format(ds)` returns `"netcdf"`, `"zarr"` or
+  `None`, reading the source paths from both the dataset and per-variable
+  encodings (`open_mfdataset` only records them on the variables).
+
+### Fixed
+
+- Documentation recommended `"io"` for *"opening many NetCDF/Zarr files
+  concurrently"*, which is right for Zarr and backwards for NetCDF; and
+  `Internals.md` described the `"auto"` classifier's signals the wrong way round
+  (CF dimension names like `time`/`lat`/`lon` score toward `"cpu"`, not `"io"`).
+
 ## [2.2.0] - 2026-08-27
 
 Correctness release. Most of these are settings that were accepted, validated

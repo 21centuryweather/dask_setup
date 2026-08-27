@@ -23,7 +23,7 @@ from dask_setup import setup_dask_client
 
 # Pick a workload type and go
 client, cluster, dask_tmp = setup_dask_client(mode="interactive", workload_type="cpu")   # heavy compute
-client, cluster, dask_tmp = setup_dask_client(mode="interactive", workload_type="io")    # heavy file I/O
+client, cluster, dask_tmp = setup_dask_client(mode="interactive", workload_type="io")    # Zarr / object storage
 client, cluster, dask_tmp = setup_dask_client(mode="interactive", workload_type="mixed") # both
 ```
 
@@ -68,11 +68,34 @@ client, cluster, shared_tmp = setup_dask_client(
 
 | Type | Topology | Best for |
 |------|----------|----------|
-| `"cpu"` | Many processes, 1 thread each | NumPy/Numba math, xarray reductions |
-| `"io"` | 1 process, 8–16 threads | Opening many NetCDF/Zarr files concurrently |
+| `"cpu"` | Many processes, 1 thread each | NumPy/Numba math, xarray reductions, **and reading NetCDF/HDF5** |
+| `"io"` | 1 process, 8–16 threads | Zarr, object storage (S3), HTTP — libraries that release the GIL |
 | `"mixed"` | Processes with 2 threads each | Pipelines that both read and compute |
 | `"gpu"` | 1 process per GPU, up to 8 threads | CuPy/RAPIDS CUDA workloads |
 | `"auto"` | Inferred from dataset | Let `dask_setup` decide based on your data |
+
+### Reading NetCDF? Use `"cpu"`, not `"io"`
+
+The split is not "I/O vs compute" — it is **whether the library releases the GIL
+and is thread-safe**. `"io"` runs one process with many threads, which only wins
+when threads can genuinely overlap.
+
+HDF5 (underneath NetCDF4) is usually not built thread-safe, so xarray routes
+*every* NetCDF read through a single process-wide lock. Under `"io"` your threads
+do not become parallel readers — they queue on that one lock, one at a time, and
+zlib decompression is serialised inside it too. Separate processes each get their
+own lock, so `"cpu"` is what actually parallelises NetCDF reads.
+
+Zarr is the opposite: it decompresses via numcodecs, which releases the GIL, and
+has no global lock, so threads scale well. Opening, concatenating and writing
+NetCDF is a `"cpu"` job even though it feels like I/O.
+
+> **Rule of thumb: NetCDF in → `"cpu"`. Zarr or object storage in → `"io"`.**
+> Pass `ds=` and `dask_setup` will warn if you get this pair the wrong way round.
+>
+> Also avoid `open_mfdataset(..., parallel=True)` together with `"io"`: concurrent
+> metadata reads can kill the worker outright, after which Dask silently
+> recomputes the lost tasks and the job appears to hang rather than fail.
 
 ---
 
@@ -222,6 +245,7 @@ Full documentation lives in the [GitHub wiki](https://github.com/21centuryweathe
 | [Benchmarking](https://github.com/21centuryweather/dask_setup/wiki/Benchmarking) | `benchmark_config`, `scaling_analysis`, `chunk_impact`, `dask-setup benchmark` |
 | [Internals](https://github.com/21centuryweather/dask_setup/wiki/Internals) | Resource detection, topology decisions, temp/spill routing, module layout |
 | [Troubleshooting](https://github.com/21centuryweather/dask_setup/wiki/Troubleshooting) | Common errors, OOM, multi-node issues, migration guide |
+| [User Feedback](https://github.com/21centuryweather/dask_setup/wiki/User-Feedback) | Questions from users, the answers, and what changed as a result |
 
 ---
 
