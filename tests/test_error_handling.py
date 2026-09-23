@@ -4,7 +4,8 @@ import os
 from unittest.mock import patch
 
 import pytest
-from src.dask_setup.error_handling import (
+
+from dask_setup.error_handling import (
     ClusterSetupError,
     ConfigurationValidationError,
     DependencyError,
@@ -382,7 +383,7 @@ class TestIntegration:
 
     def test_config_validation_integration(self):
         """Test config validation with enhanced errors."""
-        from src.dask_setup.config import DaskSetupConfig
+        from dask_setup.config import DaskSetupConfig
 
         # Try to create an invalid config
         with pytest.raises(ConfigurationValidationError) as exc_info:
@@ -397,8 +398,8 @@ class TestIntegration:
     def test_xarray_dependency_integration(self):
         """Test xarray integration with enhanced dependency errors."""
         # Mock missing xarray by patching the module-level import
-        with patch("src.dask_setup.xarray.xr", None):
-            from src.dask_setup.xarray import _ensure_xarray_available
+        with patch("dask_setup.xarray.xr", None):
+            from dask_setup.xarray import _ensure_xarray_available
 
             with pytest.raises(DependencyError) as exc_info:
                 _ensure_xarray_available()

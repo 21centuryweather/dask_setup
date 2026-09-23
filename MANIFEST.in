@@ -1,0 +1,5 @@
+# setuptools only auto-includes tests/test*.py in the sdist, which leaves out
+# conftest.py (the shared fixtures) and __init__.py -- so the suite could not
+# run from the sdist, as downstream packagers like conda-forge do.
+recursive-include tests *.py
+global-exclude __pycache__ *.py[cod] .DS_Store

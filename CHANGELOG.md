@@ -18,8 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dask_setup.xarray.detect_storage_format(ds)` returns `"netcdf"`, `"zarr"` or
   `None`, reading the source paths from both the dataset and per-variable
   encodings (`open_mfdataset` only records them on the variables).
+- Python 3.14 is now tested in CI and listed in the package classifiers.
 
 ### Fixed
+
+- The sdist now ships `tests/conftest.py` and `tests/__init__.py`. setuptools
+  only auto-includes `tests/test*.py`, so running the suite from the sdist (as
+  downstream packagers do) failed with missing fixtures.
+- `tests/test_error_handling.py` imported `src.dask_setup` instead of
+  `dask_setup`, so it failed against an installed package, and in a checkout it
+  loaded a second copy of the package — its `patch()` targeted that copy rather
+  than the module under test.
 
 - Documentation recommended `"io"` for *"opening many NetCDF/Zarr files
   concurrently"*, which is right for Zarr and backwards for NetCDF; and
