@@ -3,6 +3,7 @@
 [![CI](https://github.com/21centuryweather/dask_setup/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/21centuryweather/dask_setup/actions/workflows/ci.yml)
 [![Release](https://github.com/21centuryweather/dask_setup/actions/workflows/publish-to-pypi.yml/badge.svg)](https://github.com/21centuryweather/dask_setup/actions/workflows/publish-to-pypi.yml)
 [![PyPI](https://img.shields.io/pypi/v/dask_setup.svg)](https://pypi.org/project/dask_setup/)
+[![conda-forge](https://img.shields.io/conda/vn/conda-forge/dask-setup.svg)](https://anaconda.org/conda-forge/dask-setup)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://pypi.org/project/dask_setup/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -12,6 +13,8 @@ HPC-tuned Dask helpers for **NCI Gadi** and other PBS/SLURM systems. Wraps `dask
 ```bash
 pip install dask-setup              # single-node
 pip install dask-setup[multinode]   # + PBS/SLURM via dask-jobqueue
+
+conda install -c conda-forge dask-setup   # or via conda-forge
 ```
 
 ---
@@ -251,14 +254,24 @@ Full documentation lives in the [GitHub wiki](https://github.com/21centuryweathe
 
 ## Installation
 
+From PyPI:
+
 ```bash
 pip install dask-setup
+```
+
+From conda-forge:
+
+```bash
+conda install -c conda-forge dask-setup
 ```
 
 For multi-node PBS/SLURM support:
 
 ```bash
 pip install dask-setup dask-jobqueue
+# or
+conda install -c conda-forge dask-setup dask-jobqueue
 ```
 
 For GPU workloads (CuPy auto-detection):
