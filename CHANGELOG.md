@@ -20,7 +20,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   encodings (`open_mfdataset` only records them on the variables).
 - Python 3.14 is now tested in CI and listed in the package classifiers.
 
+### Changed
+
+- `recommend_chunks()` (and `setup_dask_client(ds=...)`) now **grows**
+  under-chunked input for `workload_type="cpu"` and `"mixed"`. Both strategies
+  started from the dataset's current chunks and could only halve them, so a
+  dataset chunked one day per step (4 MiB) was recommended `{"time": 1}`, the
+  chunking it already had, alongside a warning that it was too small. Chunks
+  are now doubled up to the lower bound of `target_chunk_mb` (never past the
+  per-worker memory cap). Doubling keeps each recommendation a whole multiple
+  of the existing chunk, so reads stay aligned with on-disk chunks.
+  Over-chunked and unchunked input get the same recommendations as before.
+- The "large task graph" chunk warning now fires above 100,000 chunks per
+  variable instead of `max(n_workers * 4, 32)`. The old threshold flagged
+  correctly sized chunks: a 28 GiB dataset split into 60 chunks of about
+  360 MiB triggered it.
+
 ### Fixed
+
+- The `InsufficientResourcesError` raised when nothing is left after
+  `reserve_mem_gb` gave impossible advice, e.g. *"Reduce reserve_mem_gb from
+  999.0 GB to -294.9 GB"* and *"Limit max_workers"* (which can't help, because
+  workers are already fitted to memory by then). It also ignored `max_mem_gb`
+  when reporting available memory. It now suggests the largest reserve that
+  would work, or raising `max_mem_gb` when that cap is the cause. The shortfall
+  it reports is never negative.
+- The dashboard SSH tunnel hint no longer prints a reverse-DNS name like
+  `1.0.0.[...].ip6.arpa` as the login host. `socket.getfqdn()` returns one on
+  macOS and on hosts without forward DNS. These now get the `<login-node>`
+  placeholder, as hosts without a domain already did.
 
 - The sdist now ships `tests/conftest.py` and `tests/__init__.py`. setuptools
   only auto-includes `tests/test*.py`, so running the suite from the sdist (as

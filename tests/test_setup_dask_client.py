@@ -228,6 +228,81 @@ def test_memory_reservation_error(isolated_env, mock_psutil):
         )
 
 
+def _clear_scheduler_env(env):
+    for key in [
+        "PBS_NCPUS",
+        "NCPUS",
+        "PBS_MEM",
+        "PBS_VMEM",
+        "SLURM_CPUS_ON_NODE",
+        "SLURM_MEM_PER_NODE",
+        "SLURM_MEM_PER_CPU",
+    ]:
+        env.pop(key, None)
+
+
+def test_memory_reservation_error_message_is_actionable(isolated_env, mock_psutil):
+    """The suggested reserve must be one that works, never a negative number.
+
+    It used to print "Reduce reserve_mem_gb from 999.0 GB to -294.9 GB" and
+    recommend fewer workers, which can't help: workers are already fitted to
+    memory before this error is possible.
+    """
+    from dask_setup.exceptions import InsufficientResourcesError
+
+    _clear_scheduler_env(isolated_env)
+    mock_psutil["virtual_memory"].return_value.total = 16 * 1024**3
+
+    with pytest.raises(InsufficientResourcesError) as exc_info:
+        setup_dask_client(workload_type="cpu", reserve_mem_gb=20.0, dashboard=False)
+
+    message = str(exc_info.value)
+    assert "Available: 0.0 GB" in message
+    assert "Shortfall: 1.0 GB" in message
+    assert "Reduce reserve_mem_gb from 20.0 GB to at most 15.0 GB" in message
+    assert "max_workers" not in message
+
+
+def test_memory_error_accounts_for_max_mem_gb(isolated_env, mock_psutil):
+    """max_mem_gb below reserve_mem_gb leaves nothing; say so, not "15 GB available"."""
+    from dask_setup.exceptions import InsufficientResourcesError
+
+    _clear_scheduler_env(isolated_env)
+    mock_psutil["virtual_memory"].return_value.total = 16 * 1024**3
+
+    with pytest.raises(InsufficientResourcesError) as exc_info:
+        setup_dask_client(workload_type="cpu", max_mem_gb=2.0, reserve_mem_gb=4.0, dashboard=False)
+
+    message = str(exc_info.value)
+    assert "Available: 0.0 GB" in message
+    assert "Raise max_mem_gb above 5.0 GB" in message
+    assert "Reduce reserve_mem_gb from 4.0 GB to at most 1.0 GB" in message
+
+
+def test_start_log_reports_resolved_workload_type(isolated_env, mock_psutil):
+    """The startup log names the workload type in effect, not the library default.
+
+    It was logged before configuration was resolved, so anyone choosing the
+    type via config= or profile= saw "workload_type=io" whatever they asked for.
+    """
+    from unittest.mock import patch
+
+    from dask_setup import client as client_module
+    from dask_setup.config import DaskSetupConfig
+
+    _clear_scheduler_env(isolated_env)
+    config = DaskSetupConfig(workload_type="cpu", reserve_mem_gb=2.0)
+
+    with patch.object(client_module.logger, "info") as mock_info:
+        client, cluster, _ = setup_dask_client(config=config, max_workers=1, dashboard=False)
+        client.close()
+        cluster.close()
+
+    start_calls = [c for c in mock_info.call_args_list if c.args[0] == "Starting Dask client setup"]
+    assert len(start_calls) == 1
+    assert start_calls[0].kwargs["workload_type"] == "cpu"
+
+
 def test_temp_directory_routing(isolated_env, mock_psutil, temp_dir):
     """Test that temp directories are routed correctly."""
     # Test PBS_JOBFS priority

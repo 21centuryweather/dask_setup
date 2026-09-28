@@ -23,7 +23,7 @@ class InsufficientResourcesError(DaskSetupError):
             f"❌ Insufficient memory for configuration:\n"
             f"   - Required: {required_mem:.1f} GB\n"
             f"   - Available: {available_mem:.1f} GB\n"
-            f"   - Shortfall: {required_mem - available_mem:.1f} GB"
+            f"   - Shortfall: {max(0.0, required_mem - available_mem):.1f} GB"
         )
 
         if self.suggested_actions:

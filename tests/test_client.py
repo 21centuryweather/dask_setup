@@ -532,7 +532,12 @@ class TestSetupDaskClient:
         mock_validate_topology,
         mock_calculate_memory,
     ):
-        """Test worker count reduction suggestions."""
+        """Fewer workers is never suggested: it can't fix this error.
+
+        calculate_memory_spec() only fails when nothing is left after the
+        reserve, which doesn't depend on the worker count -- and the count has
+        already been fitted to memory by then.
+        """
         config = DaskSetupConfig(
             reserve_mem_gb=5.0,  # Low, won't trigger memory reduction
             max_workers=8,
@@ -551,8 +556,8 @@ class TestSetupDaskClient:
             setup_dask_client()
 
         suggestions = exc_info.value.suggested_actions
-        # Should suggest limiting workers since reserve_mem_gb is low but n_workers > 1
-        assert any("Limit max_workers" in s for s in suggestions)
+        assert not any("max_workers" in s for s in suggestions)
+        assert any("Request a larger memory allocation" in s for s in suggestions)
 
     @pytest.mark.unit
     @patch("dask_setup.client.print_dashboard_info")

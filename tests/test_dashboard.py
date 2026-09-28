@@ -58,6 +58,20 @@ class TestGetLoginHost:
         monkeypatch.setattr("dask_setup.dashboard.socket.getfqdn", lambda: fqdn)
         assert get_login_host() == "<login-node>"
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "fqdn",
+        [
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa",
+            "1.0.168.192.in-addr.arpa",
+        ],
+    )
+    def test_placeholder_for_reverse_dns_names(self, monkeypatch, fqdn):
+        """macOS getfqdn() returns a PTR name with no forward DNS; that's not a host."""
+        monkeypatch.delenv(LOGIN_HOST_ENV, raising=False)
+        monkeypatch.setattr("dask_setup.dashboard.socket.getfqdn", lambda: fqdn)
+        assert get_login_host() == "<login-node>"
+
 
 class TestGetDashboardInfo:
     """Test dashboard information extraction function."""

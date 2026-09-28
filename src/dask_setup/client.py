@@ -741,12 +741,6 @@ def setup_dask_client(
             return client, cluster, tmp_path, chunks  # type: ignore[return-value]
         return client, cluster, tmp_path  # type: ignore[return-value]
 
-    logger.info(
-        "Starting Dask client setup",
-        workload_type=workload_type or _DEFAULT_WORKLOAD_TYPE,
-        environment=env_type,
-    )
-
     # Load and merge configuration.
     # Save the caller-supplied config object before the local variable is
     # rebound by _resolve_configuration so it can be used as the base layer.
@@ -771,11 +765,14 @@ def setup_dask_client(
     config.fallback_on_detection_failure = fallback_on_detection_failure
     config.adaptive_memory = adaptive_memory
 
-    logger.debug(
-        "Configuration resolved",
+    # Logged after resolution: before it, an unset workload_type reads as the
+    # library default, so profile= and config= users saw "io" whatever they chose.
+    logger.info(
+        "Starting Dask client setup",
         workload_type=config.workload_type,
-        reserve_mem_gb=config.reserve_mem_gb,
+        environment=env_type,
     )
+    logger.debug("Configuration resolved", reserve_mem_gb=config.reserve_mem_gb)
 
     # Detect system resources
     resources = detect_resources(fallback=config.fallback_on_detection_failure)
@@ -864,26 +861,29 @@ def setup_dask_client(
             max_mem_gb=config.max_mem_gb,
         )
     except ValueError as e:
-        # Extract memory values for better error reporting
+        # The only failure here is "nothing left after the reserve": the worker
+        # count was already fitted to memory above, so fewer workers can't help.
+        # Measure against the same budget compute_usable_mem_gb() used --
+        # max_mem_gb caps the total *before* the reserve comes off, and
+        # ignoring it reported memory the caller had explicitly excluded.
         total_gib = resources.total_mem_bytes / (1024**3)
-        available_gb = total_gib - config.reserve_mem_gb
-        required_gb = topology.n_workers * 1.0  # Rough estimate: 1 GB per worker minimum
+        budget_gb = min(config.max_mem_gb or total_gib, total_gib)
+        available_gb = max(0.0, budget_gb - config.reserve_mem_gb)
+        required_gb = MIN_MEM_PER_WORKER_GB  # enough for a single worker
 
-        # Generate suggested actions based on the configuration
         suggestions = []
-        if config.reserve_mem_gb > available_gb / 2:  # Reserve more than half of available
+        if config.max_mem_gb is not None and config.max_mem_gb < total_gib:
             suggestions.append(
-                f"Reduce reserve_mem_gb from {config.reserve_mem_gb:.1f} GB to {available_gb * 0.3:.1f} GB"
+                f"Raise max_mem_gb above {config.reserve_mem_gb + required_gb:.1f} GB: it caps "
+                f"total memory and reserve_mem_gb ({config.reserve_mem_gb:.1f} GB) comes out of it"
             )
-        if topology.n_workers > 1:
+        max_reserve_gb = budget_gb - required_gb
+        if max_reserve_gb > 0:
             suggestions.append(
-                f"Limit max_workers to 1 or 2 workers instead of {topology.n_workers}"
+                f"Reduce reserve_mem_gb from {config.reserve_mem_gb:.1f} GB to at most "
+                f"{max_reserve_gb:.1f} GB"
             )
-        if not suggestions:  # Fallback suggestions
-            suggestions = [
-                "Close other applications to free up memory",
-                "Request a larger memory allocation for your job",
-            ]
+        suggestions.append("Request a larger memory allocation for your job")
 
         raise InsufficientResourcesError(
             required_mem=required_gb, available_mem=available_gb, suggested_actions=suggestions

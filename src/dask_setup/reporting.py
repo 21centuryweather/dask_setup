@@ -38,6 +38,23 @@ logger = get_logger("reporting")
 _SPILL_METRIC_KEYS: tuple[str, ...] = ("spilled_bytes", "spilled_memory", "spill")
 
 
+def scheduler_workers(client: Client) -> dict[str, Any]:
+    """Return ``scheduler_info()["workers"]`` for **every** worker.
+
+    ``distributed`` 2025 changed ``Client.scheduler_info()`` to describe only
+    the first 5 workers unless ``n_workers=-1`` is passed.  Every caller here
+    wants all of them -- a full Gadi node runs dozens -- and summing over five
+    silently undercounted memory and spill, and capped reported worker counts
+    at 5.  Older ``distributed`` has no ``n_workers`` argument and always
+    returns everything.
+    """
+    try:
+        info = client.scheduler_info(n_workers=-1)
+    except TypeError:  # distributed < 2025: no n_workers, and no truncation
+        info = client.scheduler_info()
+    return info.get("workers", {})
+
+
 def worker_spill_bytes(metrics: dict[str, Any]) -> int:
     """Return bytes spilled to disk by one worker, from its heartbeat metrics.
 
@@ -62,6 +79,29 @@ def worker_spill_bytes(metrics: dict[str, Any]) -> int:
     return 0
 
 
+def worker_in_memory_bytes(metrics: dict[str, Any]) -> int:
+    """Return bytes of managed data one worker holds in memory (not spilled).
+
+    ``managed_bytes`` covers *all* of a worker's data, including what it has
+    spilled, so reporting it as memory counted spilled data twice -- once as
+    memory, once as spill -- and after heavy spilling showed workers holding
+    more than their memory limit.  The in-memory size of the spilled part is
+    ``spilled_bytes["memory"]``; subtracting it leaves what is resident.
+
+    Falls back to ``managed`` and then to ``memory`` (process memory) on
+    Dask versions without ``managed_bytes``.
+
+    Args:
+        metrics: The ``metrics`` sub-dict of one worker's ``scheduler_info``.
+    """
+    managed = metrics.get("managed_bytes") or metrics.get("managed")
+    if not managed:
+        return int(metrics.get("memory") or 0)
+    spilled = metrics.get("spilled_bytes")
+    spilled_in_memory = (spilled.get("memory") or 0) if isinstance(spilled, dict) else 0
+    return max(0, int(managed) - int(spilled_in_memory))
+
+
 @dataclass
 class ClusterReport:
     """Summary statistics collected from a Dask cluster at close time.
@@ -73,7 +113,9 @@ class ClusterReport:
         start_time passed to :func:`cluster_report`).  ``0.0`` if no start
         time was provided.
     memory_per_worker_gib : dict[str, float]
-        Managed memory (GiB) per worker address, sampled at report time.
+        Managed data held in memory (GiB) per worker address, sampled at
+        report time.  Data spilled to disk is excluded; it is counted in
+        *total_spill_gib* instead.
         Keys are worker addresses (e.g. ``"tcp://127.0.0.1:12345"``).
     total_spill_gib : float
         Total bytes written to disk spill storage across all workers (GiB).
@@ -114,7 +156,7 @@ class ClusterReport:
 
     @property
     def total_memory_gib(self) -> float:
-        """Sum of managed memory across all workers (GiB)."""
+        """Sum of in-memory managed data across all workers (GiB)."""
         return sum(self.memory_per_worker_gib.values())
 
     # ------------------------------------------------------------------
@@ -219,18 +261,14 @@ def cluster_report(
 
     # --- Scheduler info ------------------------------------------------------
     try:
-        info = client.scheduler_info()
-        workers: dict[str, Any] = info.get("workers", {})
+        workers: dict[str, Any] = scheduler_workers(client)
 
         # Per-worker memory and spill
         total_spill_bytes = 0
         for worker_addr, worker_info in workers.items():
             metrics: dict[str, Any] = worker_info.get("metrics", {})
 
-            # Memory: prefer managed_bytes (newer Dask), fall back to "memory"
-            mem_bytes = (
-                metrics.get("managed_bytes") or metrics.get("managed") or metrics.get("memory") or 0
-            )
+            mem_bytes = worker_in_memory_bytes(metrics)
             if mem_bytes:
                 report.memory_per_worker_gib[worker_addr] = mem_bytes / (1024**3)
 

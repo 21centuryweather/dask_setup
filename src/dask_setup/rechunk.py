@@ -10,7 +10,8 @@ compatible) or a native ``xarray.to_zarr()`` fallback.
 - Emits structured log messages during rechunking so users can track progress.
 - Provides clear error messages when optional dependencies are missing.
 - Falls back gracefully when ``rechunker`` is incompatible with the installed
-  xarray version (e.g. the ``zarr_format`` argument added in xarray ≥ 2024.x).
+  xarray version (e.g. the ``zarr_format`` argument added in xarray ≥ 2024.x)
+  or zarr version (rechunker 0.5 uses the zarr 2 API, removed in zarr 3).
 """
 
 from __future__ import annotations
@@ -57,11 +58,36 @@ def _warn_if_not_pure_split(ds: Any, target_chunks: dict) -> None:
         )
 
 
+def _rechunker_incompatibility(exc: BaseException) -> str | None:
+    """Name the library incompatibility behind a rechunker failure, or ``None``.
+
+    Only these failures fall back to :func:`_rechunk_native`; anything else
+    (out of memory, disk full, bad chunks) is a real error and is re-raised.
+
+    - xarray added a required ``zarr_format`` argument to
+      ``extract_zarr_variable_encoding()``, which rechunker does not pass.
+    - rechunker 0.5 is written against the zarr 2 API (``zarr.core.Array``
+      and friends), which zarr 3 removed.  Before this was recognised,
+      ``rechunk_dataset`` failed outright on any zarr 3 environment instead
+      of falling back.
+    """
+    message = str(exc)
+    if (
+        isinstance(exc, TypeError)
+        and "zarr_format" in message
+        and "extract_zarr_variable_encoding" in message
+    ):
+        return "xarray's extract_zarr_variable_encoding() requires zarr_format"
+    if isinstance(exc, AttributeError) and "zarr" in message:
+        return "rechunker uses the zarr 2 API, which the installed zarr removed"
+    return None
+
+
 def _rechunk_native(ds: Any, target_chunks: dict, output_path: Path, xr: Any) -> None:
     """Rechunk *ds* to *target_chunks* and write to *output_path* via xarray.to_zarr().
 
     This is the fallback path used when ``rechunker`` is incompatible with the
-    installed xarray version.
+    installed xarray or zarr version (see :func:`_rechunker_incompatibility`).
 
     .. warning::
 
@@ -244,59 +270,40 @@ def rechunk_dataset(
         plan.execute()
         logger.info("Rechunking complete", output_path=str(output_path))
 
-    except TypeError as exc:
-        # rechunker calls xarray's extract_zarr_variable_encoding() without the
-        # zarr_format keyword argument introduced in newer xarray versions.  When
-        # this incompatibility is detected, fall back to the native xarray path.
-        if "zarr_format" in str(exc) and "extract_zarr_variable_encoding" in str(exc):
-            logger.warning(
-                "rechunker is incompatible with the installed xarray version "
-                "(extract_zarr_variable_encoding requires zarr_format). "
-                "Falling back to native xarray.to_zarr() rechunking.",
-                error=str(exc),
-            )
-            # Clean up whatever rechunker may have partially written
-            for p in (output_path, temp_store_path):
-                if p.exists():
-                    shutil.rmtree(p, ignore_errors=True)
-            try:
-                _rechunk_native(ds, target_chunks, output_path, xr)
-                logger.info("Rechunking complete (native fallback)", output_path=str(output_path))
-            except Exception as fallback_exc:
-                if output_path.exists():
-                    shutil.rmtree(output_path, ignore_errors=True)
-                raise RuntimeError(
-                    f"rechunk_dataset failed (native fallback): {fallback_exc}\n"
-                    f"  target_chunks = {target_chunks}\n"
-                    f"  output_path   = {output_path}\n"
-                ) from fallback_exc
-            # temp_store was never created by native path — nothing to clean up
-            return _open_rechunked(output_path, ds, xr)
-        # Some other TypeError — treat as a normal failure
-        logger.warning("Rechunking failed; cleaning up partial output", error=str(exc))
+    except Exception as exc:
+        # Remove partial output to avoid leaving corrupt Zarr stores on disk
         for p in (output_path, temp_store_path):
             if p.exists():
                 shutil.rmtree(p, ignore_errors=True)
-        raise RuntimeError(
-            f"rechunk_dataset failed: {exc}\n"
-            f"  target_chunks = {target_chunks}\n"
-            f"  output_path   = {output_path}\n"
-            "Check that max_mem is not larger than per-worker memory, "
-            "and that dask_tmp has sufficient free space."
-        ) from exc
 
-    except Exception as exc:
-        logger.warning("Rechunking failed; cleaning up partial output", error=str(exc))
-        # Remove partial output to avoid leaving corrupt Zarr stores on disk
-        if output_path.exists():
-            shutil.rmtree(output_path, ignore_errors=True)
-        raise RuntimeError(
-            f"rechunk_dataset failed: {exc}\n"
-            f"  target_chunks = {target_chunks}\n"
-            f"  output_path   = {output_path}\n"
-            "Check that max_mem is not larger than per-worker memory, "
-            "and that dask_tmp has sufficient free space."
-        ) from exc
+        reason = _rechunker_incompatibility(exc)
+        if reason is None:
+            logger.warning("Rechunking failed; cleaned up partial output", error=str(exc))
+            raise RuntimeError(
+                f"rechunk_dataset failed: {exc}\n"
+                f"  target_chunks = {target_chunks}\n"
+                f"  output_path   = {output_path}\n"
+                "Check that max_mem is not larger than per-worker memory, "
+                "and that dask_tmp has sufficient free space."
+            ) from exc
+
+        logger.warning(
+            "rechunker is incompatible with the installed libraries; "
+            "falling back to native xarray.to_zarr() rechunking",
+            reason=reason,
+            error=str(exc),
+        )
+        try:
+            _rechunk_native(ds, target_chunks, output_path, xr)
+            logger.info("Rechunking complete (native fallback)", output_path=str(output_path))
+        except Exception as fallback_exc:
+            if output_path.exists():
+                shutil.rmtree(output_path, ignore_errors=True)
+            raise RuntimeError(
+                f"rechunk_dataset failed (native fallback): {fallback_exc}\n"
+                f"  target_chunks = {target_chunks}\n"
+                f"  output_path   = {output_path}\n"
+            ) from fallback_exc
 
     finally:
         # Always attempt to clean up the intermediate temp store

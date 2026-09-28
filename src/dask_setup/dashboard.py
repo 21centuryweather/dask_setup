@@ -25,13 +25,18 @@ def get_login_host() -> str:
        unconditionally, including to SLURM users who have never heard of it.
     3. ``"<login-node>"`` as an obvious placeholder when there is no domain
        to work from (a laptop, a container with no DNS suffix).
+
+    ``getfqdn()`` falls back to a reverse-DNS pointer name when the host has no
+    forward entry -- on macOS typically ``1.0.0.[...].ip6.arpa`` -- and splitting
+    that gave a 60-character "login host".  Pointer names never name a host you
+    can SSH to, so they get the placeholder too.
     """
     override = os.environ.get(LOGIN_HOST_ENV)
     if override:
         return override
 
     fqdn = socket.getfqdn()
-    if "." in fqdn:
+    if "." in fqdn and not fqdn.lower().rstrip(".").endswith(".arpa"):
         domain = fqdn.split(".", 1)[1]
         if domain and domain not in {"local", "localdomain"}:
             return domain

@@ -423,6 +423,134 @@ class TestChunkCalculation:
             assert isinstance(result.warnings, list)
 
 
+class TestUnderChunkedInputGrows:
+    """cpu/mixed used to only halve chunks, so under-chunked input came back as-is.
+
+    A 10-year daily 0.25-degree dataset chunked one day per chunk (4 MiB) got
+    the recommendation ``{"time": 1}`` -- the chunking it already had, which the
+    same call then warned was too small.
+    """
+
+    MIB = 1024 * 1024
+
+    @staticmethod
+    def _daily_dataset_info(time_chunk: int) -> dict:
+        n_time = 3650
+        return {
+            "dims": {"time": n_time, "lat": 721, "lon": 1440},
+            "current_chunking": {
+                "time": (time_chunk,) * (n_time // time_chunk),
+                "lat": (721,),
+                "lon": (1440,),
+            },
+            "variables": {
+                "tas": {
+                    "dtype": "float32",
+                    "shape": (n_time, 721, 1440),
+                    "dims": ["time", "lat", "lon"],
+                    "size_bytes": n_time * 721 * 1440 * 4,
+                }
+            },
+            "is_currently_chunked": True,
+        }
+
+    @staticmethod
+    def _cluster_info(worker_gib: float = 3.0) -> dict:
+        return {
+            "n_workers": 4,
+            "threads_per_worker": 1,
+            "memory_limit_bytes": int(worker_gib * 1024**3),
+            "total_memory_bytes": int(4 * worker_gib * 1024**3),
+        }
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("workload_type", ["cpu", "mixed"])
+    def test_grows_into_target_range(self, workload_type):
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        result = _calculate_optimal_chunks(
+            dataset_info=self._daily_dataset_info(time_chunk=1),
+            cluster_info=self._cluster_info(),
+            workload_type=workload_type,
+        )
+
+        assert result.chunks["time"] > 1
+        assert 256 <= result.estimated_chunk_mb <= 512
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("workload_type", ["cpu", "mixed"])
+    def test_growth_stays_aligned_to_existing_chunks(self, workload_type):
+        """Recommended chunks are whole multiples of the current (on-disk) chunk."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        result = _calculate_optimal_chunks(
+            dataset_info=self._daily_dataset_info(time_chunk=5),
+            cluster_info=self._cluster_info(),
+            workload_type=workload_type,
+        )
+
+        assert result.chunks["time"] % 5 == 0
+
+    @pytest.mark.unit
+    def test_growth_respects_worker_memory_cap(self):
+        """With little worker memory the floor yields to the cap."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        # 0.1 GiB * 0.6 safety factor ~= 61 MiB cap, well under the 256 MiB floor
+        result = _calculate_optimal_chunks(
+            dataset_info=self._daily_dataset_info(time_chunk=1),
+            cluster_info=self._cluster_info(worker_gib=0.1),
+            workload_type="cpu",
+        )
+
+        assert result.chunks["time"] > 1
+        assert result.estimated_chunk_mb <= 0.1 * 1024 * 0.6
+
+    @pytest.mark.unit
+    def test_well_sized_chunks_are_not_a_large_graph(self):
+        """60 chunks of ~360 MiB is the right answer, not a task-graph warning."""
+        from dask_setup.xarray import _calculate_optimal_chunks
+
+        result = _calculate_optimal_chunks(
+            dataset_info=self._daily_dataset_info(time_chunk=365),
+            cluster_info=self._cluster_info(),
+            workload_type="cpu",
+        )
+
+        assert result.total_chunks < 1000
+        assert not any("large task graph" in w for w in result.warnings)
+
+    @pytest.mark.unit
+    def test_huge_chunk_counts_still_warn(self):
+        from dask_setup.xarray import _MAX_REASONABLE_CHUNKS, _calculate_optimal_chunks
+
+        n = _MAX_REASONABLE_CHUNKS * 2
+        dataset_info = {
+            "dims": {"sample": n},
+            "current_chunking": {},
+            "variables": {
+                "v": {
+                    "dtype": "float64",
+                    "shape": (n,),
+                    "dims": ["sample"],
+                    "size_bytes": n * 8,
+                }
+            },
+            "is_currently_chunked": False,
+        }
+
+        # Tiny target range forces one element per chunk
+        result = _calculate_optimal_chunks(
+            dataset_info=dataset_info,
+            cluster_info=self._cluster_info(),
+            workload_type="cpu",
+            target_chunk_mb=(0, 8 / self.MIB),
+        )
+
+        assert result.total_chunks > _MAX_REASONABLE_CHUNKS
+        assert any("large task graph" in w for w in result.warnings)
+
+
 class TestFormatReport:
     """Tests for human-readable report formatting."""
 

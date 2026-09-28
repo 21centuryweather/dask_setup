@@ -105,8 +105,9 @@ def _get_cluster_info(client: Client | None) -> dict[str, Any]:
     if client is not None:
         try:
             # Get info from active cluster
-            scheduler_info = client.scheduler_info()
-            workers = scheduler_info.get("workers", {})
+            from .reporting import scheduler_workers
+
+            workers = scheduler_workers(client)
 
             if not workers:
                 # Fallback if no workers detected
@@ -222,6 +223,11 @@ def _analyze_dataset(ds: xr.Dataset | xr.DataArray) -> dict[str, Any]:
         "is_currently_chunked": is_currently_chunked,
     }
 
+
+#: Chunks per variable beyond which the task graph itself becomes a cost.
+#: Dask's scheduler spends roughly 1 ms per task, so ~100k tasks is where
+#: overhead starts to rival useful work.
+_MAX_REASONABLE_CHUNKS = 100_000
 
 _TEMPORAL_PATTERNS: tuple[str, ...] = (
     "time",
@@ -395,6 +401,7 @@ def _calculate_optimal_chunks(
     # Ensure target range fits within the memory constraint
     effective_target_max = min(target_max_bytes, max_chunk_bytes)
     # Floor: don't recommend chunks smaller than the configured minimum (but never exceed the cap)
+    effective_target_min = min(int(target_chunk_mb[0] * 1024 * 1024), effective_target_max)
 
     # Auto-detect workload type if needed
     if workload_type == "auto":
@@ -468,8 +475,39 @@ def _calculate_optimal_chunks(
             chunk_size *= chunk_dict.get(dim, dims[dim])
         return float(chunk_size)
 
+    def _grow_to_floor(preferred_dims: list[str]) -> None:
+        """Double free dims until the chunk reaches the target floor.
+
+        The cpu and mixed strategies below start from the dataset's current
+        chunks and only ever halve them, so a dataset that arrived
+        under-chunked (one time step per chunk, say) came back unchanged.
+        Doubling keeps every recommendation a whole multiple of the existing
+        chunk, which is usually the on-disk chunk, so reads stay aligned.
+        Dims in *preferred_dims* are grown first.
+        """
+        while _estimate_chunk_bytes(working_chunks) < effective_target_min:
+            growable = [d for d in free_dims if working_chunks[d] < dims[d]]
+            if not growable:
+                break
+            tier = [d for d in growable if d in preferred_dims] or growable
+            # Grow the smallest dim, which keeps cpu chunks square-ish
+            dim = min(tier, key=lambda d: working_chunks[d])
+            grown = min(dims[dim], working_chunks[dim] * 2)
+            candidate = {**working_chunks, dim: grown}
+            if _estimate_chunk_bytes(candidate) > effective_target_max:
+                break
+            working_chunks[dim] = grown
+
     # Apply chunking strategy based on workload type.
     # All reduction loops only touch *free_dims*; locked dims stay at full size.
+    if workload_type == "cpu":
+        _grow_to_floor(preferred_dims=[])
+    elif workload_type == "mixed":
+        # Mixed keeps temporal dims large, so grow them first
+        _grow_to_floor(
+            preferred_dims=[d for d in free_dims if any(t in d.lower() for t in _TEMPORAL_PATTERNS)]
+        )
+
     if workload_type == "io":
         # I/O workloads: favor streaming patterns, chunk along record dimensions
         record_dims = [
@@ -566,9 +604,11 @@ def _calculate_optimal_chunks(
             "Consider using fewer workers or rechunking manually for better parallelism."
         )
 
-    # Cap at reasonable chunk count to avoid task graph explosion
-    max_reasonable_chunks = max(n_workers * 4, 32)
-    if total_chunks > max_reasonable_chunks:
+    # Warn only when the graph gets big enough for scheduler overhead to matter.
+    # This used to be max(n_workers * 4, 32), which flagged a 28 GiB dataset
+    # split into 60 well-sized chunks -- chunk count is set by data size over
+    # chunk size, not by how many workers there are.
+    if total_chunks > _MAX_REASONABLE_CHUNKS:
         warnings_list.append(
             f"Generated {total_chunks} chunks, which may create a large task graph. "
             "Consider using larger chunk sizes if memory permits."

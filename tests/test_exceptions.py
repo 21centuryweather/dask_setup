@@ -175,6 +175,13 @@ class TestInsufficientResourcesError:
         assert "Shortfall: 0.0 GB" in message
 
     @pytest.mark.unit
+    def test_shortfall_never_negative(self):
+        """More available than required is not a negative shortfall."""
+        message = str(InsufficientResourcesError(2.0, 15.0))
+
+        assert "Shortfall: 0.0 GB" in message
+
+    @pytest.mark.unit
     def test_fractional_memory(self):
         """Test InsufficientResourcesError with fractional memory values."""
         error = InsufficientResourcesError(7.5, 4.2)

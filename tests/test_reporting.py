@@ -78,6 +78,33 @@ class TestClusterReport:
         assert "spill=3.00 GiB" in report.summary_line()
 
     @pytest.mark.unit
+    def test_spilled_data_is_not_also_counted_as_memory(self):
+        """managed_bytes includes spilled data; memory must exclude it.
+
+        Real metrics from a 1 GiB worker holding 1.6 GB, 1.344 GB of it
+        spilled: the worker's resident managed data is 0.256 GB, not 1.6 GB
+        (which is more than its memory limit).
+        """
+        client = MagicMock()
+        client.scheduler_info.return_value = {
+            "workers": {
+                "tcp://w1": {
+                    "metrics": {
+                        "managed_bytes": 1_600_000_000,
+                        "spilled_bytes": {"memory": 1_344_000_000, "disk": 1_344_009_744},
+                        "memory": 802_062_336,
+                    }
+                }
+            }
+        }
+        client.run_on_scheduler.return_value = 0
+
+        report = cluster_report(client)
+
+        assert report.peak_memory_gib == pytest.approx(256_000_000 / 2**30)
+        assert report.total_spill_gib == pytest.approx(1_344_009_744 / 2**30)
+
+    @pytest.mark.unit
     def test_survives_an_unreachable_scheduler(self):
         """Metric collection is best-effort and must never raise."""
         client = MagicMock()
