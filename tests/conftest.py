@@ -1,9 +1,29 @@
 """Pytest configuration and fixtures for dask_setup tests."""
 
+import copy
 import os
 from unittest.mock import patch
 
+import dask
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_dask_config():
+    """Undo global dask.config changes after every test.
+
+    configure_dask_settings() (and so setup_dask_client()) sets process-wide
+    dask config: spill directory, memory thresholds, spill compression.  Tests
+    that used spill_compression="zstd" left it set, so later tests that start a
+    real cluster failed wherever the zstandard package isn't installed -- as in
+    CI -- with "Invalid compression setting ... spill-compression=zstd".
+    """
+    saved = copy.deepcopy(dask.config.config)
+    try:
+        yield
+    finally:
+        dask.config.config.clear()
+        dask.config.config.update(saved)
 
 
 @pytest.fixture

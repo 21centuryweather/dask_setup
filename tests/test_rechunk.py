@@ -144,6 +144,9 @@ class TestRechunkerIncompatibilityFallback:
             raise OSError("No space left on device")
 
         monkeypatch.setitem(sys.modules, "rechunker", types.SimpleNamespace(rechunk=rechunk))
+        # rechunk_dataset only checks zarr is importable; the stubbed rechunker
+        # fails before any store is written, so this test needs no real zarr.
+        monkeypatch.setitem(sys.modules, "zarr", types.ModuleType("zarr"))
 
         with pytest.raises(RuntimeError, match="No space left on device"):
             rechunk_dataset(
