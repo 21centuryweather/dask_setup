@@ -243,11 +243,10 @@ def tune_memory_thresholds(
     spill_gib: float = 0.0
 
     try:
-        from .reporting import worker_spill_bytes
+        from .reporting import scheduler_workers, worker_spill_bytes
 
-        info = client.scheduler_info()
         total_spill_bytes = sum(
-            worker_spill_bytes(w.get("metrics", {})) for w in info.get("workers", {}).values()
+            worker_spill_bytes(w.get("metrics", {})) for w in scheduler_workers(client).values()
         )
         spill_gib = total_spill_bytes / (1024**3)
     except Exception as e:

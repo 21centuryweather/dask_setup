@@ -49,6 +49,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `1.0.0.[...].ip6.arpa` as the login host. `socket.getfqdn()` returns one on
   macOS and on hosts without forward DNS. These now get the `<login-node>`
   placeholder, as hosts without a domain already did.
+- **Anything that summed or counted workers saw at most 5 of them.**
+  `distributed` 2025 changed `Client.scheduler_info()` to describe only the
+  first 5 workers unless asked for all. On any node running more workers,
+  `cluster_report()` undercounted memory and spill, `tune_memory_thresholds()`
+  decided from partial spill figures, `recommend_chunks()`,
+  `recommend_parquet_chunks()` and the benchmarks reported 5 workers, and the
+  multi-node backends logged 5 connected workers. All of these now go through
+  `dask_setup.reporting.scheduler_workers()`, which fetches every worker (and
+  still works on older `distributed`).
+- `cluster_report()` counted spilled data twice, once as memory and once as
+  spill, because `managed_bytes` includes data already on disk. After heavy
+  spilling it reported workers holding more than their memory limit.
+  `memory_per_worker_gib` now covers only data held in memory
+  (`dask_setup.reporting.worker_in_memory_bytes()`).
+- `rechunk_dataset()` failed on zarr 3 instead of falling back to
+  `xarray.to_zarr()`. rechunker 0.5 uses the zarr 2 API, and the fallback only
+  recognised the older xarray `zarr_format` incompatibility. Real failures
+  (disk full, out of memory) still raise.
+- The "Starting Dask client setup" log line reported the library default
+  `workload_type="io"` whenever the type came from `config=` or `profile=`. It
+  is now logged after configuration is resolved.
 
 - The sdist now ships `tests/conftest.py` and `tests/__init__.py`. setuptools
   only auto-includes `tests/test*.py`, so running the suite from the sdist (as
@@ -62,6 +83,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   concurrently"*, which is right for Zarr and backwards for NetCDF; and
   `Internals.md` described the `"auto"` classifier's signals the wrong way round
   (CF dimension names like `time`/`lat`/`lon` score toward `"cpu"`, not `"io"`).
+- The recipe notebooks (`examples/recipes/notebooks/`) all run again against
+  current dask, xarray and zarr 3, and no longer contradict the library. Among
+  other fixes, they no longer recommend `"io"` for NetCDF or call h5netcdf
+  GIL-free. `reserve_mem_gb` values that exceeded a laptop's RAM are gone, and
+  `lz4`, which stops workers starting unless installed, is replaced by
+  `spill_compression="auto"`. The memory recipe now measures real spill
+  instead of filesystem usage, and the HPC recipe uses `MultiNodeConfig` and
+  `generate_pbs_script()` instead of re-implementing them.
+- `examples/recipes/configs/cpu_profile.yaml` had its settings at the top level
+  instead of under `config:`, so loading it silently ignored every one of them
+  and used the defaults.
 
 ## [2.2.0] - 2026-08-27
 

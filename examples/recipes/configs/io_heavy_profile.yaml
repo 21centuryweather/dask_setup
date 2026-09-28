@@ -1,0 +1,10 @@
+name: io_heavy
+description: High-throughput I/O with many threads
+workload_type: io
+max_workers: 2
+reserve_mem_gb: 40.0
+spill_compression: snappy
+tags:
+- io-heavy
+- multithreaded
+notes: Optimized for opening many NetCDF/Zarr files in parallel.

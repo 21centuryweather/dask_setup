@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .logging import get_logger
+from .reporting import scheduler_workers
 
 if TYPE_CHECKING:
     from dask.distributed import Client
@@ -561,7 +562,7 @@ def _measure_one(
 
     # Worker count
     with contextlib.suppress(Exception):
-        n_workers = len(client.scheduler_info().get("workers", {}))
+        n_workers = len(scheduler_workers(client))
 
     # Optional warmup (not sampled -- it is not part of the measured run)
     if warmup:
@@ -1286,7 +1287,7 @@ def run_synthetic_benchmark(
             dashboard=False,
         )
 
-        n_workers = len(client.scheduler_info().get("workers", {}))
+        n_workers = len(scheduler_workers(client))
 
         if verbose:
             print(f"Cluster ready: {n_workers} workers. Running {operation!r} × {repeats} …")

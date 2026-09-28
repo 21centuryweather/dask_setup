@@ -83,7 +83,9 @@ class TestRechunkerIncompatibilityFallback:
     @pytest.mark.parametrize(
         "exc",
         [
-            TypeError("extract_zarr_variable_encoding() missing 1 required argument: 'zarr_format'"),
+            TypeError(
+                "extract_zarr_variable_encoding() missing 1 required argument: 'zarr_format'"
+            ),
             AttributeError("module 'zarr.core' has no attribute 'Array'"),
         ],
     )

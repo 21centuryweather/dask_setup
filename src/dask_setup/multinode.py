@@ -480,7 +480,9 @@ def _wait_for_workers(
             f"worker job logs (usually in ~/dask-worker-space/ or the PBS log dir)\n"
         ) from exc
 
-    n_connected = len(client.scheduler_info().get("workers", {}))
+    from .reporting import scheduler_workers
+
+    n_connected = len(scheduler_workers(client))
     logger.debug("Workers connected", n_connected=n_connected, expected_total=expected_total)
 
 

@@ -1,38 +1,49 @@
+# Example dask_setup profile for CPU-intensive workloads.
+#
+# Settings live under `config:`. A profile with its settings at the top level
+# loads without error, but every setting is ignored and the defaults are used.
+#
+# Load it with:
+#   ConfigManager().load_profile_from_file("cpu_profile.yaml")
+# or copy it to ~/.dask_setup/profiles/ and use setup_dask_client(profile="cpu_intensive").
+#
+# This profile suits CPU-bound work that benefits from:
+#   - Many single-threaded workers (sidesteps the GIL)
+#   - Spill compression ("auto" uses lz4 when the lz4 package is installed)
+#   - A large memory reservation for OS/filesystem caches
+#
+# Best for: NumPy maths, reductions, xarray computations, NetCDF/HDF5 input
+# Avoid for: Zarr or cloud object storage (use workload_type "io"), small quick tasks
+
 name: "cpu_intensive"
-description: "Heavy computation workload optimized for mathematical operations"
-workload_type: "cpu"
-max_workers: null  # Use all available cores
-reserve_mem_gb: 60.0
-max_mem_gb: null
-dashboard: true
-adaptive: false
-min_workers: null
-suggest_chunks: true
+version: "1.7"
 
-# Advanced memory management
-memory_target: 0.75
-memory_spill: 0.85
-memory_pause: 0.92
-memory_terminate: 0.98
+config:
+  description: "Heavy computation workload optimized for mathematical operations"
+  workload_type: "cpu"
+  max_workers: null  # Use all available cores
+  reserve_mem_gb: 60.0
+  max_mem_gb: null
+  dashboard: true
+  adaptive: false
+  min_workers: null
+  suggest_chunks: true
 
-# Compression settings
-spill_compression: "lz4"
-comm_compression: false
+  # Advanced memory management
+  memory_target: 0.75
+  memory_spill: 0.85
+  memory_pause: 0.92
+  memory_terminate: 0.98
 
-# Tags for organization
-tags:
-  - "cpu-heavy"
-  - "mathematical"
-  - "scientific"
-  - "single-threaded"
+  # Compression settings
+  # "lz4" is faster but crashes workers at startup unless `pip install lz4` has
+  # been done; "auto" picks lz4, then snappy, then none, whichever is installed.
+  spill_compression: "auto"
+  comm_compression: false
 
-# Comments and documentation
-notes: |
-  This profile is optimized for CPU-intensive workloads that benefit from:
-  - Many single-threaded workers (avoids GIL)
-  - Fast spill compression (lz4)
-  - Conservative memory spilling
-  - Large memory reservation for OS/filesystem caches
-  
-  Best for: NumPy operations, mathematical reductions, xarray computations
-  Avoid for: I/O-heavy operations, small quick tasks
+  # Tags for organization
+  tags:
+    - "cpu-heavy"
+    - "mathematical"
+    - "scientific"
+    - "single-threaded"

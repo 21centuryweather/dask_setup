@@ -177,8 +177,9 @@ def recommend_parquet_chunks(
     max_partition_mb = target_partition_mb[1]
     if client is not None:
         try:
-            info = client.scheduler_info()
-            workers = info.get("workers", {})
+            from .reporting import scheduler_workers
+
+            workers = scheduler_workers(client)
             if workers:
                 min_worker_mem_bytes = min(
                     w.get("memory_limit", float("inf")) for w in workers.values()
