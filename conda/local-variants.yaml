@@ -1,0 +1,7 @@
+# Local builds only. On conda-forge, python_min comes from the global pinning
+# (currently 3.11, matching requires-python), and the linter rejects recipes
+# that redefine it. Do not submit this file to staged-recipes.
+#
+#   rattler-build build --recipe conda/recipe.yaml -m conda/local-variants.yaml -c conda-forge
+python_min:
+  - "3.11"

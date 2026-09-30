@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-28
+
 ### Added
 
 - `setup_dask_client(ds=...)` now warns when `workload_type="io"` is paired with
