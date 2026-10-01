@@ -778,9 +778,9 @@ def recommend_chunks(
         **kwargs: Additional parameters (reserved for future use)
 
     Returns:
-        If verbose=False: Dict mapping dimension names to recommended chunk sizes
-            (locked dimensions appear as ``-1``)
-        If verbose=True: ChunkRecommendation object with full details
+        A dict mapping dimension names to recommended chunk sizes (locked
+        dimensions appear as ``-1``) when ``verbose=False``; a
+        ChunkRecommendation object with full details when ``verbose=True``.
 
     Raises:
         XarrayDependencyError: If xarray or numpy are not installed

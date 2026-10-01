@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- The documentation is now a Read the Docs–style site at
+  <https://21centuryweather.github.io/dask_setup/>, built with Sphinx from `docs/` and
+  published by GitHub Actions. It adds an API reference generated from the
+  docstrings and the changelog. The GitHub wiki now points to it.
+
 ## [2.3.0] - 2026-10-01
 
 ### Added

@@ -1,6 +1,7 @@
 # dask_setup
 
 [![CI](https://github.com/21centuryweather/dask_setup/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/21centuryweather/dask_setup/actions/workflows/ci.yml)
+[![Docs](https://github.com/21centuryweather/dask_setup/actions/workflows/docs.yml/badge.svg?branch=main)](https://21centuryweather.github.io/dask_setup/)
 [![Release](https://github.com/21centuryweather/dask_setup/actions/workflows/publish-to-pypi.yml/badge.svg)](https://github.com/21centuryweather/dask_setup/actions/workflows/publish-to-pypi.yml)
 [![PyPI](https://img.shields.io/pypi/v/dask_setup.svg)](https://pypi.org/project/dask_setup/)
 [![conda-forge](https://img.shields.io/conda/vn/conda-forge/dask-setup.svg)](https://anaconda.org/conda-forge/dask-setup)
@@ -188,7 +189,7 @@ client, cluster, dask_tmp = setup_dask_client(profile="climate_analysis")
 | `production` | mixed | 80 GB | Adaptive, dashboard off |
 | `interactive` | mixed | 20 GB | Jupyter notebooks, 4 workers |
 
-See [Configuration](https://github.com/21centuryweather/dask_setup/wiki/Configuration) for how to create and save your own profiles.
+See [Configuration](https://21centuryweather.github.io/dask_setup/configuration.html) for how to create and save your own profiles.
 
 ---
 
@@ -238,17 +239,18 @@ dask-setup submit my_analysis.py --scheduler pbs \
 
 ## Documentation
 
-Full documentation lives in the [GitHub wiki](https://github.com/21centuryweather/dask_setup/wiki):
+Full documentation, including an API reference generated from the docstrings, is at **[21centuryweather.github.io/dask_setup](https://21centuryweather.github.io/dask_setup/)**:
 
 | Page | What's covered |
 |------|----------------|
-| [Configuration](https://github.com/21centuryweather/dask_setup/wiki/Configuration) | `DaskSetupConfig`, profiles, site-wide profiles, profile inheritance, CLI, JSON Schema |
-| [Multi-Node](https://github.com/21centuryweather/dask_setup/wiki/Multi-Node) | `MultiNodeConfig`, PBS/SLURM cluster setup, GPU topology, shared temp dirs, `dask-setup submit` |
-| [IO-Optimization](https://github.com/21centuryweather/dask_setup/wiki/IO-Optimization) | `recommend_chunks`, `recommend_io_chunks`, Zarr v3, Kerchunk, Parquet/Arrow, storage-aware chunking |
-| [Benchmarking](https://github.com/21centuryweather/dask_setup/wiki/Benchmarking) | `benchmark_config`, `scaling_analysis`, `chunk_impact`, `dask-setup benchmark` |
-| [Internals](https://github.com/21centuryweather/dask_setup/wiki/Internals) | Resource detection, topology decisions, temp/spill routing, module layout |
-| [Troubleshooting](https://github.com/21centuryweather/dask_setup/wiki/Troubleshooting) | Common errors, OOM, multi-node issues, migration guide |
-| [User Feedback](https://github.com/21centuryweather/dask_setup/wiki/User-Feedback) | Questions from users, the answers, and what changed as a result |
+| [Configuration](https://21centuryweather.github.io/dask_setup/configuration.html) | `DaskSetupConfig`, profiles, site-wide profiles, profile inheritance, CLI, JSON Schema |
+| [Multi-Node](https://21centuryweather.github.io/dask_setup/multi-node.html) | `MultiNodeConfig`, PBS/SLURM cluster setup, GPU topology, shared temp dirs, `dask-setup submit` |
+| [IO-Optimization](https://21centuryweather.github.io/dask_setup/io-optimization.html) | `recommend_chunks`, `recommend_io_chunks`, Zarr v3, Kerchunk, Parquet/Arrow, storage-aware chunking |
+| [Benchmarking](https://21centuryweather.github.io/dask_setup/benchmarking.html) | `benchmark_config`, `scaling_analysis`, `chunk_impact`, `dask-setup benchmark` |
+| [Internals](https://21centuryweather.github.io/dask_setup/internals.html) | Resource detection, topology decisions, temp/spill routing, module layout |
+| [Troubleshooting](https://21centuryweather.github.io/dask_setup/troubleshooting.html) | Common errors, OOM, multi-node issues, migration guide |
+| [User Feedback](https://21centuryweather.github.io/dask_setup/user-feedback.html) | Questions from users, the answers, and what changed as a result |
+| [API Reference](https://21centuryweather.github.io/dask_setup/api.html) | Every public function and class |
 
 ---
 
