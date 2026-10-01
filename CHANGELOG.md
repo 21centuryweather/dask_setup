@@ -7,26 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **`setup_dask_client()` now defaults to `mode="interactive"` instead of
-  `"auto"`.** A bare call uses the resources already allocated to the current
-  job and never submits new ones. Under `"auto"`, a call from inside a PBS or
-  SLURM *batch* job resolved to `"pbs"`/`"slurm"` and submitted worker jobs
-  via dask-jobqueue, which queued behind the job that was waiting for them.
-  On a multi-node allocation you get an `SSHCluster` across the allocated
-  nodes. On a single node, or outside any job (a laptop, a login node),
-  behaviour is unchanged: the same `LocalCluster` as `mode="local"`. Pass
-  `mode="auto"` to get the old behaviour back.
-
-### Fixed
-
-- `mode="interactive"` on a single allocated node silently ignored
-  `fallback_on_detection_failure`, `adaptive_memory`, and dataset-based
-  `workload_type="auto"` inference. It now takes the local path directly, so
-  these apply.
-
-## [2.3.0] - 2026-09-28
+## [2.3.0] - 2026-10-01
 
 ### Added
 
@@ -43,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`setup_dask_client()` now defaults to `mode="interactive"` instead of
+  `"auto"`.** A bare call uses the resources already allocated to the current
+  job and never submits new ones. Under `"auto"`, a call from inside a PBS or
+  SLURM *batch* job resolved to `"pbs"`/`"slurm"` and submitted worker jobs
+  via dask-jobqueue, which queued behind the job that was waiting for them.
+  On a multi-node allocation you get an `SSHCluster` across the allocated
+  nodes. On a single node, or outside any job (a laptop, a login node),
+  behaviour is unchanged: the same `LocalCluster` as `mode="local"`. Pass
+  `mode="auto"` to get the old behaviour back.
 - `recommend_chunks()` (and `setup_dask_client(ds=...)`) now **grows**
   under-chunked input for `workload_type="cpu"` and `"mixed"`. Both strategies
   started from the dataset's current chunks and could only halve them, so a
@@ -59,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `mode="interactive"` on a single allocated node silently ignored
+  `fallback_on_detection_failure`, `adaptive_memory`, and dataset-based
+  `workload_type="auto"` inference. It now takes the local path directly, so
+  these apply.
 - The `InsufficientResourcesError` raised when nothing is left after
   `reserve_mem_gb` gave impossible advice, e.g. *"Reduce reserve_mem_gb from
   999.0 GB to -294.9 GB"* and *"Limit max_workers"* (which can't help, because

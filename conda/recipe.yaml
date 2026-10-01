@@ -1,6 +1,6 @@
 context:
   name: dask-setup
-  version: "2.2.0"
+  version: "2.3.0"
 
 package:
   name: ${{ name|lower }}
@@ -8,7 +8,7 @@ package:
 
 source:
   url: https://pypi.org/packages/source/${{ name[0] }}/dask_setup/dask_setup-${{ version }}.tar.gz
-  sha256: 7c64b5e89fc3153a47cd2424899d968ab6385e2132a817f18e9785e505b18fbb
+  sha256: 3466cab1c0ca454dbbacd9d8c4070b71b5a36a8c7d185496b33b9d4a5a1390a6
 
 build:
   number: 0
