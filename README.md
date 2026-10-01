@@ -113,7 +113,7 @@ NetCDF is a `"cpu"` job even though it feels like I/O.
 | `dashboard` | `True` | Start dashboard and print SSH tunnel hint |
 | `profile` | `None` | Named config profile |
 | `config` | `None` | Pre-built `DaskSetupConfig` object — same layer as `profile`; if both are given, `profile` wins |
-| `mode` | `"auto"` | `"local"`, `"pbs"`, `"slurm"`, or `"auto"` (v2.0) |
+| `mode` | `"interactive"` | `"interactive"` uses the current allocation and never submits jobs (a single node or no job at all is a plain `LocalCluster`); `"auto"` picks `"pbs"`/`"slurm"` in batch jobs, which submit worker jobs; also `"local"`, `"pbs"`, `"slurm"` |
 | `multi_node_config` | `None` | `MultiNodeConfig` for PBS/SLURM multi-node jobs (v2.0) |
 
 Settings are layered, lowest to highest:

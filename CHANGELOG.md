@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`setup_dask_client()` now defaults to `mode="interactive"` instead of
+  `"auto"`.** A bare call uses the resources already allocated to the current
+  job and never submits new ones. Under `"auto"`, a call from inside a PBS or
+  SLURM *batch* job resolved to `"pbs"`/`"slurm"` and submitted worker jobs
+  via dask-jobqueue, which queued behind the job that was waiting for them.
+  On a multi-node allocation you get an `SSHCluster` across the allocated
+  nodes. On a single node, or outside any job (a laptop, a login node),
+  behaviour is unchanged: the same `LocalCluster` as `mode="local"`. Pass
+  `mode="auto"` to get the old behaviour back.
+
+### Fixed
+
+- `mode="interactive"` on a single allocated node silently ignored
+  `fallback_on_detection_failure`, `adaptive_memory`, and dataset-based
+  `workload_type="auto"` inference. It now takes the local path directly, so
+  these apply.
+
 ## [2.3.0] - 2026-09-28
 
 ### Added

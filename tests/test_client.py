@@ -1114,6 +1114,16 @@ class TestModeDispatchHonoursConfiguration:
 
     _RET = ("client", "cluster", "/scratch/tmp")
 
+    @pytest.fixture(autouse=True)
+    def _two_allocated_nodes(self):
+        # Interactive mode only reaches setup_interactive_cluster on a
+        # multi-node allocation; one node or none takes the local path.
+        with patch(
+            "dask_setup.client.discover_allocated_nodes",
+            return_value={"gadi-cpu-1": 48, "gadi-cpu-2": 48},
+        ):
+            yield
+
     @pytest.mark.unit
     @pytest.mark.parametrize(
         ("mode", "target"),
@@ -1233,7 +1243,7 @@ class TestModeDispatchHonoursConfiguration:
 
     @pytest.mark.unit
     def test_no_spurious_warning_for_interactive(self, caplog):
-        """Interactive on one node goes through the local path and honours these."""
+        """Interactive is not a batch backend, so it should not warn about these."""
         import logging
 
         with (

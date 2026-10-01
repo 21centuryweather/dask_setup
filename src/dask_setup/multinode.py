@@ -758,6 +758,33 @@ def _parse_slurm_nodelist(nodelist: str, cpus_per_node: int = 1) -> dict[str, in
     return dict.fromkeys(hosts, cpus_per_node)
 
 
+def discover_allocated_nodes() -> dict[str, int]:
+    """Return ``{hostname: cores}`` for the nodes allocated to the current job.
+
+    Reads ``PBS_NODEFILE`` first, then ``SLURM_NODELIST`` /
+    ``SLURM_JOB_NODELIST``.  Returns an empty dict outside a PBS or SLURM
+    allocation (a laptop, a login node).
+    """
+    nodefile = os.getenv("PBS_NODEFILE", "")
+    slurm_nodelist = os.getenv("SLURM_NODELIST") or os.getenv("SLURM_JOB_NODELIST", "")
+
+    if nodefile and Path(nodefile).exists():
+        node_cores = _parse_pbs_nodefile(nodefile)
+        logger.debug("PBS_NODEFILE parsed", nodes=list(node_cores.keys()))
+        return node_cores
+    if slurm_nodelist:
+        # SLURM_CPUS_ON_NODE can be a comma-separated list (one per node)
+        cpus_str = os.getenv("SLURM_CPUS_ON_NODE", "1")
+        try:
+            cpus_per_node = int(cpus_str.split(",")[0])
+        except ValueError:
+            cpus_per_node = 1
+        node_cores = _parse_slurm_nodelist(slurm_nodelist, cpus_per_node)
+        logger.debug("SLURM nodelist parsed", nodes=list(node_cores.keys()))
+        return node_cores
+    return {}
+
+
 def setup_interactive_cluster(
     workload_type: str = "cpu",
     workers_per_node: int | None = None,
@@ -813,25 +840,7 @@ def setup_interactive_cluster(
     """
     from dask.distributed import Client
 
-    # --- Discover allocated nodes ------------------------------------------
-    node_cores: dict[str, int] = {}
-
-    nodefile = os.getenv("PBS_NODEFILE", "")
-    slurm_nodelist = os.getenv("SLURM_NODELIST") or os.getenv("SLURM_JOB_NODELIST", "")
-
-    if nodefile and Path(nodefile).exists():
-        node_cores = _parse_pbs_nodefile(nodefile)
-        logger.debug("PBS_NODEFILE parsed", nodes=list(node_cores.keys()))
-    elif slurm_nodelist:
-        # SLURM_CPUS_ON_NODE can be a comma-separated list (one per node)
-        cpus_str = os.getenv("SLURM_CPUS_ON_NODE", "1")
-        try:
-            cpus_per_node = int(cpus_str.split(",")[0])
-        except ValueError:
-            cpus_per_node = 1
-        node_cores = _parse_slurm_nodelist(slurm_nodelist, cpus_per_node)
-        logger.debug("SLURM nodelist parsed", nodes=list(node_cores.keys()))
-
+    node_cores = discover_allocated_nodes()
     unique_nodes = list(node_cores.keys())
 
     # --- Single-node path (LocalCluster) ------------------------------------

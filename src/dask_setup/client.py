@@ -25,6 +25,7 @@ from .logging import get_logger
 from .multinode import (
     MultiNodeConfig,
     detect_cluster_mode,
+    discover_allocated_nodes,
     setup_interactive_cluster,
     setup_pbs_cluster,
     setup_slurm_cluster,
@@ -495,7 +496,7 @@ def setup_dask_client(
     ds: Any = None,  # xr.Dataset | xr.DataArray | None
     fallback_on_detection_failure: bool = False,
     adaptive_memory: bool = False,
-    mode: str = "auto",
+    mode: str = "interactive",
     multi_node_config: MultiNodeConfig | None = None,
 ) -> tuple[Client, LocalCluster, str] | tuple[Client, LocalCluster, str, dict[str, int]]:
     """Create a single-node Dask LocalCluster tuned for HPC login/compute nodes.
@@ -579,21 +580,22 @@ def setup_dask_client(
         and tightens the worker ``memory.target`` / ``memory.spill`` thresholds
         slightly, giving workers more head-room from the start.  Default
         ``False``.
-    mode : {"auto", "local", "pbs", "slurm", "interactive"}
+    mode : {"interactive", "auto", "local", "pbs", "slurm"}
         Backend selection.
 
+        - ``"interactive"`` (default) — use resources already allocated in
+          the current PBS or SLURM job, interactive (``qsub -I``,
+          ``salloc``) or batch. Never submits new jobs. Multi-node
+          allocations create an ``SSHCluster`` across all nodes in
+          ``PBS_NODEFILE`` / ``SLURM_NODELIST``; a single node, or no
+          allocation at all, gets the same ``LocalCluster`` as ``"local"``.
         - ``"local"`` — always use a single-node ``LocalCluster`` (default
           behaviour prior to v2.0).
         - ``"pbs"`` — launch via ``dask-jobqueue.PBSCluster`` (submits new
           batch jobs).  Requires ``pip install dask-jobqueue``.
         - ``"slurm"`` — launch via ``dask-jobqueue.SLURMCluster`` (submits
           new batch jobs).
-        - ``"interactive"`` — use resources already allocated in the current
-          interactive PBS (``qsub -I``) or SLURM (``salloc``) session.
-          Single-node allocations create a ``LocalCluster``; multi-node
-          allocations create an ``SSHCluster`` across all nodes in
-          ``PBS_NODEFILE`` / ``SLURM_NODELIST``.
-        - ``"auto"`` (default) — inspect the environment and choose
+        - ``"auto"`` — inspect the environment and choose
           ``"interactive"`` when inside a PBS interactive job
           (``PBS_ENVIRONMENT=PBS_INTERACTIVE``) or a SLURM interactive
           allocation (``SLURM_BATCH_FLAG`` not set to ``"1"``);
@@ -647,7 +649,7 @@ def setup_dask_client(
         client, cluster, tmp, chunks = setup_dask_client(ds=ds, suggest_chunks=True)
         ds_opt = ds.chunk(chunks)
 
-        # Multi-node PBS — auto-detects from environment
+        # Multi-node PBS — submits worker jobs via dask-jobqueue
         client, cluster, tmp = setup_dask_client(
             mode="pbs",
             multi_node_config=MultiNodeConfig(
@@ -670,6 +672,14 @@ def setup_dask_client(
     if resolved_mode == "auto":
         resolved_mode = detect_cluster_mode()
         logger.debug("Mode auto-resolved", mode=resolved_mode)
+
+    # Interactive on one node (or none — a laptop, a login node) is just a
+    # LocalCluster, so take the local path directly. Going through
+    # setup_interactive_cluster() would drop ds-based workload inference,
+    # fallback_on_detection_failure and adaptive_memory.
+    if resolved_mode == "interactive" and len(discover_allocated_nodes()) <= 1:
+        resolved_mode = "local"
+        logger.debug("Interactive mode with at most one allocated node — using local path")
 
     # --- Profile auto-selection -----------------------------------------
     # Must happen before _resolve_configuration so the selected profile name

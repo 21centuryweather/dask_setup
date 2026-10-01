@@ -1168,6 +1168,26 @@ class TestSetupInteractiveClusterMultiNode:
 class TestSetupDaskClientInteractiveDispatch:
     """setup_dask_client(mode='interactive') should call setup_interactive_cluster."""
 
+    @pytest.fixture(autouse=True)
+    def _two_allocated_nodes(self):
+        with patch(
+            "dask_setup.client.discover_allocated_nodes",
+            return_value={"gadi-cpu-1": 48, "gadi-cpu-2": 48},
+        ):
+            yield
+
+    def test_default_mode_is_interactive(self):
+        """A bare call uses the current allocation rather than submitting jobs."""
+        with patch(
+            "dask_setup.client.setup_interactive_cluster",
+            return_value=(MagicMock(), MagicMock(), ""),
+        ) as mock_interactive:
+            from dask_setup.client import setup_dask_client
+
+            setup_dask_client()
+
+        mock_interactive.assert_called_once()
+
     def test_explicit_interactive_mode(self):
         """mode='interactive' always calls setup_interactive_cluster."""
         mock_client = MagicMock()
@@ -1204,6 +1224,47 @@ class TestSetupDaskClientInteractiveDispatch:
 
         mock_interactive.assert_called_once()
         assert result[0] is mock_client
+
+
+class TestInteractiveWithoutMultiNodeAllocation:
+    """Interactive mode on one node, or outside any job, is the local path.
+
+    It is the default, so a bare call on a laptop must behave exactly like
+    mode="local" -- including the options setup_interactive_cluster does not
+    forward (ds-based workload inference, fallback_on_detection_failure,
+    adaptive_memory).
+    """
+
+    @pytest.mark.parametrize("nodes", [{}, {"gadi-cpu-1": 48}])
+    def test_skips_setup_interactive_cluster(self, nodes):
+        from dask_setup.client import setup_dask_client
+
+        with (
+            patch("dask_setup.client.discover_allocated_nodes", return_value=nodes),
+            patch("dask_setup.client.setup_interactive_cluster") as mock_interactive,
+            patch("dask_setup.client.detect_resources", side_effect=RuntimeError("local path")),
+            pytest.raises(RuntimeError, match="local path"),
+        ):
+            setup_dask_client(mode="interactive")
+
+        mock_interactive.assert_not_called()
+
+
+class TestDiscoverAllocatedNodes:
+    def test_empty_outside_an_allocation(self, monkeypatch):
+        from dask_setup.multinode import discover_allocated_nodes
+
+        for var in ("PBS_NODEFILE", "SLURM_NODELIST", "SLURM_JOB_NODELIST"):
+            monkeypatch.delenv(var, raising=False)
+        assert discover_allocated_nodes() == {}
+
+    def test_reads_pbs_nodefile(self, monkeypatch, tmp_path):
+        from dask_setup.multinode import discover_allocated_nodes
+
+        nodefile = tmp_path / "nodes"
+        nodefile.write_text("gadi-cpu-1\ngadi-cpu-1\ngadi-cpu-2\n")
+        monkeypatch.setenv("PBS_NODEFILE", str(nodefile))
+        assert set(discover_allocated_nodes()) == {"gadi-cpu-1", "gadi-cpu-2"}
 
 
 class TestJobqueueResourceSemantics:
