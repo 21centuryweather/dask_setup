@@ -67,8 +67,19 @@ dev = [
 docs = [
     "sphinx>=8",
     "sphinx-rtd-theme>=3",
-    "myst-parser>=4",
+    "myst-nb>=1.1",
     "sphinx-copybutton>=0.5",
+    "ipykernel",
+    # The example notebooks are executed during the build.
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "netcdf4",
+    "h5netcdf",
+    # zarr 3: current xarray no longer writes through zarr 2. rechunker is left
+    # out on purpose -- it pins zarr<3, and rechunk_dataset() falls back to
+    # native xarray without it.
+    "zarr>=3",
 ]
 
 [tool.setuptools.package-data]

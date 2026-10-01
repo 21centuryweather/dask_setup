@@ -99,6 +99,7 @@ NetCDF is a `"cpu"` job even though it feels like I/O.
 
 | Page | What's covered |
 |------|----------------|
+| [Examples](examples.md) | Executed tutorial and recipe notebooks |
 | [Configuration](configuration.md) | `DaskSetupConfig`, profiles, site-wide profiles, profile inheritance, CLI, JSON Schema |
 | [Multi-Node](multi-node.md) | `MultiNodeConfig`, PBS/SLURM cluster setup, GPU topology, shared temp dirs, `dask-setup submit` |
 | [IO-Optimization](io-optimization.md) | `recommend_chunks`, `recommend_io_chunks`, Zarr v3, Kerchunk, Parquet/Arrow, storage-aware chunking |
@@ -163,6 +164,7 @@ Full details in [CHANGELOG.md](https://github.com/21centuryweather/dask_setup/bl
 :hidden:
 :caption: User guide
 
+examples
 configuration
 multi-node
 io-optimization

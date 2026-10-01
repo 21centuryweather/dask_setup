@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   <https://21centuryweather.github.io/dask_setup/>, built with Sphinx from `docs/` and
   published by GitHub Actions. It adds an API reference generated from the
   docstrings and the changelog. The GitHub wiki now points to it.
+- The tutorial and the ten recipe notebooks in `examples/` are on the site,
+  executed at build time so every page shows real output. A notebook that
+  raises fails the docs build.
+
+### Fixed
+
+- `examples/recipes/notebooks/05_xarray_chunking.ipynb` had three duplicate
+  cell IDs, which nbformat rewrites with a warning on every load.
 
 ## [2.3.0] - 2026-10-01
 
