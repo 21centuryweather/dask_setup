@@ -47,6 +47,10 @@ nb_execution_mode = "force"
 nb_execution_timeout = 300
 nb_execution_raise_on_error = True
 nb_execution_show_tb = True
+# Notebooks edited on Gadi carry the kernel name of whatever conda env saved
+# them (e.g. conda-env-analysis3-26.10-py), which doesn't exist on CI. Run
+# every notebook on the build environment's own python3 kernel.
+nb_kernel_rgx_aliases = {".*": "python3"}
 # Notebook kernels inherit this environment. dask_setup's INFO lines go to
 # stderr and would otherwise put a dozen log boxes between each code cell and
 # its result; warnings still show.

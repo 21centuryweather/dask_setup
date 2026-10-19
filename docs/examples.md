@@ -21,6 +21,8 @@ jupyter lab examples
 :maxdepth: 1
 
 examples/tutorial/dask_setup_tutorial
+examples/tutorial/workers-threads-processes-dask
+examples/tutorial/workers_threads_processes
 ```
 
 ```{toctree}
